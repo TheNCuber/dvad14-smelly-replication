@@ -1,0 +1,873 @@
+---
+title: "Machine Learning Algorithm"
+author: "RR"
+date: "16 dicembre 2016"
+output: html_document
+---
+
+```{r Load R libraries}
+library(plyr)
+library(caret)
+library(DMwR)
+library(stringr)
+options( java.parameters = "-Xmx12g" )
+library( RWeka )
+library(rJava)
+# Enable parallel execution if available
+if(.Platform$OS.type == "unix"){
+  library(doMC)
+  library(parallel)
+  registerDoMC(detectCores())
+}
+if(.Platform$OS.type == "windows"){
+  library(foreach)
+  library(doParallel)
+  # cl<-makeCluster(8)
+  registerDoParallel(4)
+}
+```
+
+```{r read package csv tomcat.dev}
+knitr::opts_chunk$set(cache=TRUE)#attivata la cache del markdown
+# to.timestamp <- function(d) as.POSIXct(d, format="%Y-%m-%dT%H:%M:%S")
+to.timestamp.fromint <- function(d) as.POSIXct(d,origin = "1970-01-01", tz = "GMT")
+# library(data.table)
+# pkg.merged<-fread("cache/jgit/package_merged.csv")
+# pkg.merged[,.(commit_time=to.timestamp.fromint(pkg.merged$commit_time))]
+# head(pkg.merged)
+
+pkg.merged.df <- read.csv("cache/tomcat/package_merged.dev.csv",
+                          head=TRUE,
+                          sep=",")
+pkg.merged.df$commit_time<-to.timestamp.fromint(pkg.merged.df$commit_time)
+# library(plyr)
+pkg.group <- ddply(pkg.merged.df,.(), summarise, minDate=min(commit_time), maxDate=max(commit_time))#per avere data inizio e fine commit analizzati
+# Add missing column UD copying the number of correlated packages. It will by transformed to a factor below
+pkg.merged.df$UD <- pkg.merged.df$UDnumCorrelatedPackage
+    pkg.merged.df <- subset(pkg.merged.df, select = -c(minRatio.out, minRatio.in, UDminInstabilityCorrelatedPackage, HLminFanIn, HLminFanOut, HLminTD,
+    maxRatio.out, maxRatio.in, UDmaxInstabilityCorrelatedPackage, HLmaxFanIn, HLmaxFanOut, HLmaxTD,
+    meanRatio.out, meanRatio.in, UDmeanInstabilityCorrelatedPackage, UDsdInstabilityCorrelatedPackage,
+    HLmeanFanIn, HLsdFanIn, HLmeanFanOut, HLsdFanOut, HLmeanTD, HLsdTD, InstabilityUnstableDependenciesPackage, RMA, RMI, CE, CA, RMD))
+```
+
+```{r group data by year-month-day}
+# library(plyr)
+pkg.merged.df$commit_date <- factor(strftime(pkg.merged.df$commit_time, "%Y-%m"))
+
+pkg.merged.df <- ddply(pkg.merged.df[setdiff(names(pkg.merged.df),c("version", "commit_time"))],
+                       .(package, commit_date),
+                       function(slice) {
+                           slice.cols <- setdiff(names(slice), c("package", "commit_date", "author", "mail"))
+  cbind(colwise(min)(slice[, slice.cols[grep("min", slice.cols)]]),
+        colwise(max)(slice[, slice.cols[grep("max", slice.cols)]]),
+        colwise(mean)(slice[, slice.cols[grep("(mean|sd)", slice.cols)]]),
+        colwise(sum)(slice[, slice.cols[grep("(min|max|mean|sd)", slice.cols, invert = TRUE)]])
+  )
+}, .progress = "text")
+```
+
+
+```{r Lagging package metrics}
+lag.df <- function(df, lags, colnames = names(df)) {
+  # this can yield unexpected errors if nrow(df) <= lags
+  if(nrow(df) > lags) {
+    lagged <- df
+    for(i in 1:lags) {
+        attached <- df[(1+i):nrow(df), colnames]
+        names(attached) <- paste0(names(attached), "-", i)
+        lagged <- cbind(lagged[1:(nrow(df)-i), ], attached, row.names = NULL)
+    }
+    return(lagged)
+  } else {
+    df[0:0, ]
+  }
+}
+lag.dt <- function(dt, lags, colnames = names(dt)) {
+  # this can yield unexpected errors if nrow(df) <= lags  
+  lagged <- dt[,shift(.SD,n=1:lags,give.names = TRUE), colnames]
+    # for(i in 1:lags) {
+       # nm1<-dt[, colnames]
+       # nm2 <- paste( nm1,"", sep="-")
+       # lagged <-dt[, (nm2) :=  shift(.SD,1:5,give.names = TRUE), .SDcols=nm1]
+    # }
+    return(lagged)
+}
+```
+
+#Lag packages value and use caret to perform machine learning
+```{r lag package dataset}
+# setkey(pkg.merged,"version", "commit_time","package")
+# pkg.lagged <- lag.dt(pkg.merged,
+#                      5,
+#                      setdiff(names(pkg.merged), c("version", "commit_time","package")))
+pkg.merged.df <- subset(pkg.merged.df, select=-c(minCommit.out, maxCommit.out, meanCommit.out, minCommit.in, maxCommit.in, meanCommit.in))#, minRatio.out, maxRatio.out, meanRatio.out, minRatio.in, maxRatio.in, meanRatio.in))
+
+pkg.lagged <- ddply(pkg.merged.df, .(package), function(pkg) {
+  sorted <- pkg[order(pkg[["commit_date"]], decreasing = TRUE), ]
+    lag.df(sorted, 12, colnames = setdiff(names(sorted), c("package", "commit_date", "star", "circle", "tiny", "clique", "chain", "CD", "UD", "HL", "IXPD")))
+}, .progress = "text")
+```
+
+Please before use caret install all the dependencies and the suggested ones (are more than 400)
+install.packages("caret", dependencies = c("Depends", "Suggests"))
+follow istruction at <https://cran.r-project.org/web/packages/caret/vignettes/caret.pdf/>
+
+```{r cv test star pkg}
+
+# library(plyr)#colwise
+# library(caret)
+shapes <- c("star", "circle", "tiny", "clique", "chain")
+targets <- c(shapes, "CD", "UD", "HL", "IXPD")
+pkg.dataset <- subset(pkg.lagged, select=-c(commit_date, package))
+head(pkg.dataset)
+tfcutter <- colwise(cut, breaks = c(0,1,.Machine$integer.max), labels = c(0, 1), right = FALSE, ordered_result = TRUE)
+pkg.dataset <- cbind(tfcutter(pkg.dataset[targets]), pkg.dataset[setdiff(names(pkg.dataset), targets)])
+head(pkg.dataset)
+
+# Remove columns with near-zero variance
+pkg.dataset.nzv <- pkg.dataset[, -nearZeroVar(pkg.dataset)]
+
+fitControl <- trainControl(## 10-fold CV
+                           method = "repeatedcv",
+                           number = 10,
+                           ## repeated ten times
+                           repeats = 10,
+                           savePredictions = TRUE,
+                           verboseIter = TRUE,
+                           sampling = "down")
+# Enable parallel execution if available
+#if(.Platform$OS.type == "unix"){
+#  library(doMC)
+#  library(parallel)
+#  registerDoMC(detectCores())
+#}
+#if(.Platform$OS.type == "windows"){
+#  library(foreach)
+#  library(doParallel)
+#  # cl<-makeCluster(8)
+#  registerDoParallel(detectCores())
+#}
+
+# define a function to encapsulate the training procedure
+runCV <- function(lagged, .models, .shapes, .outfilePrefix = "") {
+  # Generate all combinations of targets and models to test
+  experiments <- expand.grid(shape = .shapes, model = .models)
+  adply(experiments, .margins = 1, function(experiment) {
+    currentShape <- paste(experiment[1, "shape"])
+    currentModel <- paste(experiment[1, "model"])
+    
+    if (currentShape %in% names(lagged)) {
+      # Keep only lagged columns in the dataset, plus the class
+      lagged.train <- cbind(lagged[c(currentShape)],
+                            lagged[grep("-", names(lagged))])
+      print(paste("Model:", currentModel))
+      print(names(lagged.train))
+      fit <- train(as.formula(paste(currentShape, "~ .")),
+                   data = lagged.train,
+                   method = currentModel,
+                   trControl = fitControl)
+      cm <- confusionMatrix(confusionMatrix(fit, norm = "none")$table,
+                            positive = "1",
+                            mode = "prec_recall")
+      cm.df <- data.frame(as.list(cm$overall), as.list(cm$byClass))
+        write.csv(cm.df, paste0(.outfilePrefix, "cm-", currentShape, "-", currentModel, ".csv"))
+		saveRDS(fit, paste0(.outfilePrefix, "model-", currentShape, "-", currentModel, ".rds"))
+      cm.df
+    } else {
+      data.frame()
+    }
+  })
+}
+
+
+    fitControl.smote <- trainControl(## 10-fold CV
+                        method = "repeatedcv",
+                        number = 10, ## repeated ten times
+                        repeats = 10,
+                           savePredictions = TRUE,
+                        verboseIter = TRUE,
+                        sampling = "smote")
+    runCV.smote <- function(lagged, .models, .shapes, .outfilePrefix = "") {
+        # Generate all combinations of targets and models to test
+        experiments <- expand.grid(shape = .shapes, model = .models)
+        adply(experiments, .margins = 1, function(experiment) {
+            currentShape <- paste(experiment[1, "shape"])
+            currentModel <- paste(experiment[1, "model"])
+            if (currentShape %in% names(lagged)) {
+                # Keep only lagged columns in the dataset, plus the class
+                lagged.train <- cbind(lagged[c(currentShape)],
+                            lagged[grep("-", names(lagged))])
+                print(paste("Model:", currentModel))
+                print(names(lagged.train))
+                fit <- train(as.formula(paste(currentShape, "~ .")),
+                   data = lagged.train,
+                   method = currentModel,
+                   trControl = fitControl.smote)
+                cm <- confusionMatrix(confusionMatrix(fit, norm = "none")$table,
+                            positive = "1",
+                            mode = "prec_recall")
+                cm.df <- data.frame(as.list(cm$overall), as.list(cm$byClass))
+                write.csv(cm.df, paste0(.outfilePrefix, "cm-", currentShape, "-", currentModel, ".csv"))
+                saveRDS(fit, paste0(.outfilePrefix, "model-", currentShape, "-", currentModel, ".rds"))
+                cm.df
+            } else {
+                data.frame()
+            }
+        })
+    }
+```
+
+
+```{r train nb and all targets}
+models <- c("nb") # "C5.0" "logreg" has some issues, should be tested outside
+set.seed(825)
+confusionMatricesNB <- runCV(pkg.dataset.nzv, models, targets, "dev.only.tomcat-month-")
+write.csv(confusionMatricesNB, "dev.only.tomcat-month-cm-ALL-nb.csv")
+#```
+
+#```{r train C5.0 and all targets}
+models <- c("C5.0") # "C5.0" "logreg" has some issues, should be tested outside
+set.seed(825)
+confusionMatricesC50 <- runCV(pkg.dataset.nzv, models, targets, "dev.only.tomcat-month-")
+write.csv(confusionMatricesC50, "dev.only.tomcat-month-cm-ALL-c50.csv")
+#```
+
+
+#```{r train rf and all targets}
+models <- c("rf") # "C5.0" "logreg" has some issues, should be tested outside
+set.seed(825)
+confusionMatricesRF <- runCV(pkg.dataset.nzv, models, targets, "dev.only.tomcat-month-")
+write.csv(confusionMatricesRF, "dev.only.tomcat-month-cm-ALL-rf.csv")
+#```
+
+#```{r write all confusion matrices}
+write.csv(rbind(confusionMatricesNB, confusionMatricesC50, confusionMatricesRF), "dev.only.tomcat-month-cm-ALL-ALL.csv")
+```
+
+
+```{r train nb and all targets smote}
+models <- c("nb") # "C5.0" "logreg" has some issues, should be tested outside
+set.seed(825)
+confusionMatricesNB <- runCV.smote(pkg.dataset.nzv, models, targets, "smote.dev.only.tomcat-month-")
+write.csv(confusionMatricesNB, "smote.dev.only.tomcat-month-cm-ALL-nb.csv")
+#```
+
+#```{r train C5.0 and all targets}
+models <- c("C5.0") # "C5.0" "logreg" has some issues, should be tested outside
+set.seed(825)
+confusionMatricesC50 <- runCV.smote(pkg.dataset.nzv, models, targets, "smote.dev.only.tomcat-month-")
+write.csv(confusionMatricesC50, "smote.dev.only.tomcat-month-cm-ALL-c50.csv")
+#```
+
+
+#```{r train rf and all targets}
+models <- c("rf") # "C5.0" "logreg" has some issues, should be tested outside
+set.seed(825)
+confusionMatricesRF <- runCV.smote(pkg.dataset.nzv, models, targets, "smote.dev.only.tomcat-month-")
+write.csv(confusionMatricesRF, "smote.dev.only.tomcat-month-cm-ALL-rf.csv")
+#```
+
+#```{r write all confusion matrices}
+write.csv(rbind(confusionMatricesNB, confusionMatricesC50, confusionMatricesRF), "smote.dev.only.tomcat-month-cm-ALL-ALL.csv")
+```
+
+
+```{r train svm and all targets}
+shapes <- c("star", "circle", "tiny", "clique", "chain")
+targets <- c(shapes, "CD", "UD", "HL", "IXPD")
+pkg.dataset.svm <- subset(pkg.lagged, select = -c(commit_date, package))
+head(pkg.dataset)
+n <- names(pkg.dataset.svm)
+#tfcutter <- colwise(cut, breaks = c(0, 1, .Machine$integer.max), labels = c(0, 1), right = FALSE, ordered_result = TRUE)
+#pkg.dataset <- cbind(tfcutter(pkg.dataset[targets]), pkg.dataset[setdiff(names(pkg.dataset), targets)])
+# Remove columns with near-zero variance
+
+range01 <- function(x) {(x - min(x)) / (max(x) - min(x)) }
+    pkg.dataset.svm.t <- apply(pkg.dataset.svm[setdiff(names(pkg.dataset.svm), targets)], 2, range01)
+    pkg.dataset.svm <- cbind(ifelse(pkg.dataset.svm[targets]<1,0,1), pkg.dataset.svm.t)
+    rm(pkg.dataset.svm.t)
+    pkg.dataset.svm <- as.data.frame(pkg.dataset.svm)
+	#names(pkg.dataset.svm) <- n
+    head(pkg.dataset.svm)
+    #pkg.dataset.svm <- as.data.frame(cbind(pkg.dataset.svm[c("star","tiny", "clique", "chain", "CD", "UD", "IXPD")], ifelse(pkg.dataset.svm[grep("-",names(pkg.dataset.svm))]<1,0,1)))
+pkg.dataset.svm <- pkg.dataset.svm[, -nearZeroVar(pkg.dataset.svm)]
+pkg.dataset.nzv <- pkg.dataset.svm
+
+fitControl.svm <- trainControl(## 10-fold CV
+            method = "repeatedcv"
+            #,number = 10
+						## repeated ten times
+            ,repeats = 5
+            ,verboseIter = TRUE
+						#,classProbs=TRUE
+						,savePredictions = TRUE
+						#,sampling = "down"
+            #,summaryFunction = twoClassSummary # Use AUC to pick the best model
+						)
+
+
+# define a function to encapsulate the training procedure
+runCV.svm <- function(lagged, .grid, .models, .targets, .outfilePrefix = "") {
+        # Generate all combinations of targets and models to test
+    #experiments <- expand.grid(shape = .shapes, model = .models)
+    #models <- c(  "svmLinear","svmRadial")
+    experiments <- expand.grid(shape = .targets, model = .models)
+	#lagged = pkg.dataset.nzv
+    print(experiments)
+    #head(lagged)
+    #names(lagged)
+    adply(experiments, .margins = 1, function(experiment) {
+        currentShape <- paste(experiment[1, "shape"])
+        currentModel <- paste(experiment[1, "model"])
+        #print(paste("Model:", currentModel))
+        #print(paste("Col lagged:", names(lagged)))
+        if (currentShape %in% names(lagged)) {
+            # Keep only lagged columns in the dataset, plus the class
+            lagged.train <- cbind(lagged[c(currentShape)],
+                            lagged[grep("-", names(lagged))])
+            trainIndex <- createDataPartition(lagged.train[,currentShape], p=.5,list = FALSE)
+            trainData <- lagged.train[trainIndex,]
+            testData <- lagged.train[-trainIndex,]
+            lagged.train<-trainData
+            print(paste("Model:", currentModel))
+            print(names(lagged.train))
+            fit <- train(
+			          #as.formula(paste(currentShape, " ~ .",sep = "")),
+                # data = lagged.train,
+                #y = paste("lagged.train$", currentShape, sep = ""),
+                y = factor(model.matrix(~. - 1, lagged.train[currentShape])),
+                x = model.matrix(~. - 1, lagged.train),
+                method = currentModel,
+                tuneGrid = .grid, 
+                #tuneLength =9,# 9 values of the cost function
+                preProc = c("center", "scale"), # Center and scale data
+                trControl = fitControl.svm)
+            print(fit)
+            test_pred = predict(fit,newData=model.matrix(~. - 1,testData))
+            print("predictiton test", test_pred)
+            #cm <- confusionMatrix(test_pred,testData[,currentShape])
+            cm<-confusionMatrix(fit$pred$pred, fit$pred$obs,positive = "1", mode = "prec_recall")
+    				
+            #cm <- confusionMatrix(confusionMatrix(fit, norm = "none")$table,
+            #                   positive = "1",
+            #                   mode = "prec_recall")
+            
+            cm.df <- data.frame(as.list(cm$overall), as.list(cm$byClass))
+            write.csv(cm.df, paste0(.outfilePrefix, "cm-", currentShape, "-", currentModel, ".csv"))
+			saveRDS(fit, paste0(.outfilePrefix, "model-", currentShape, "-", currentModel, ".rds"))
+            cm.df
+        } else {
+            data.frame()
+        }
+    })
+}
+```
+
+```{r}
+models <- c("svmRadial") # "C5.0" "logreg" has some issues, should be tested outside
+set.seed(825)
+    grid <- expand.grid(sigma = c(.5, .6, .7, .8, .9, 1, 1.2, 1.4), C = c(1.25, 1.5, 1.75, 2, 2.25))
+    grid <- expand.grid(sigma = c(.05, .07, .1, .15, .17, .2, .25, .3, .35, .4), C = c(.5, 1.0, 1.25, 1.5, 2, 4, 8, 10))
+confusionMatricesSVMRadial <- runCV.svm(pkg.dataset.nzv, grid, models, targets, "dev.only.tomcat-month-")
+write.csv(confusionMatricesSVMRadial, "dev.only.tomcat-month-cm-ALL-svm-radial.csv")
+
+models <- c("svmLinear") # "C5.0" "logreg" has some issues, should be tested outside
+set.seed(825)
+#head(pkg.dataset.nzv)
+#names(pkg.dataset.nzv)
+grid <- expand.grid(C = c(0.01,0.05,0.1,0.5,0.75,0.9, 1, 1.1, 1.25, 2, 4 , 8, 10))
+confusionMatricesSVMlinear <- runCV.svm(pkg.dataset.nzv, grid, models, targets, "dev.only.tomcat-month-")
+write.csv(confusionMatricesSVMlinear, "dev.only.tomcat-month-cm-ALL-svm-linear.csv")
+```
+
+
+[1] "Model: nb"
+ [1] "star"                 "max.file.changed-1"   "numjavafile-1"        "nummail-1"            "sum.added.total-1"    "sum.removed.total-1"  "chain-1"             
+ [8] "CD-1"                 "max.file.changed-2"   "numjavafile-2"        "nummail-2"            "sum.added.total-2"    "sum.removed.total-2"  "sum.removed.file-2"  
+[15] "chain-2"              "CD-2"                 "max.file.changed-3"   "numjavafile-3"        "nummail-3"            "sum.added.total-3"    "sum.removed.total-3" 
+[22] "chain-3"              "CD-3"                 "max.file.changed-4"   "numjavafile-4"        "nummail-4"            "sum.added.total-4"    "sum.removed.total-4" 
+[29] "chain-4"              "CD-4"                 "max.file.changed-5"   "numjavafile-5"        "nummail-5"            "sum.added.total-5"    "sum.removed.total-5" 
+[36] "sum.removed.file-5"   "chain-5"              "CD-5"                 "max.file.changed-6"   "numjavafile-6"        "nummail-6"            "sum.added.total-6"   
+[43] "sum.removed.total-6"  "sum.removed.file-6"   "chain-6"              "CD-6"                 "max.file.changed-7"   "numjavafile-7"        "nummail-7"           
+[50] "sum.added.total-7"    "sum.removed.total-7"  "sum.removed.file-7"   "chain-7"              "CD-7"                 "max.file.changed-8"   "numjavafile-8"       
+[57] "nummail-8"            "sum.added.total-8"    "sum.removed.total-8"  "chain-8"              "CD-8"                 "max.file.changed-9"   "numjavafile-9"       
+[64] "nummail-9"            "sum.added.total-9"    "sum.removed.total-9"  "chain-9"              "CD-9"                 "max.file.changed-10"  "numjavafile-10"      
+[71] "nummail-10"           "sum.added.total-10"   "sum.removed.total-10" "chain-10"             "CD-10"                "max.file.changed-11"  "numjavafile-11"      
+[78] "nummail-11"           "sum.added.total-11"   "sum.removed.total-11" "chain-11"             "CD-11"                "max.file.changed-12"  "numjavafile-12"      
+[85] "nummail-12"           "sum.added.total-12"   "sum.removed.total-12" "chain-12"             "CD-12"               
+Aggregating results
+Selecting tuning parameters
+Fitting fL = 0, usekernel = FALSE, adjust = 1 on full training set
+[1] "Model: nb"
+ [1] "clique"               "max.file.changed-1"   "numjavafile-1"        "nummail-1"            "sum.added.total-1"    "sum.removed.total-1"  "chain-1"             
+ [8] "CD-1"                 "max.file.changed-2"   "numjavafile-2"        "nummail-2"            "sum.added.total-2"    "sum.removed.total-2"  "sum.removed.file-2"  
+[15] "chain-2"              "CD-2"                 "max.file.changed-3"   "numjavafile-3"        "nummail-3"            "sum.added.total-3"    "sum.removed.total-3" 
+[22] "chain-3"              "CD-3"                 "max.file.changed-4"   "numjavafile-4"        "nummail-4"            "sum.added.total-4"    "sum.removed.total-4" 
+[29] "chain-4"              "CD-4"                 "max.file.changed-5"   "numjavafile-5"        "nummail-5"            "sum.added.total-5"    "sum.removed.total-5" 
+[36] "sum.removed.file-5"   "chain-5"              "CD-5"                 "max.file.changed-6"   "numjavafile-6"        "nummail-6"            "sum.added.total-6"   
+[43] "sum.removed.total-6"  "sum.removed.file-6"   "chain-6"              "CD-6"                 "max.file.changed-7"   "numjavafile-7"        "nummail-7"           
+[50] "sum.added.total-7"    "sum.removed.total-7"  "sum.removed.file-7"   "chain-7"              "CD-7"                 "max.file.changed-8"   "numjavafile-8"       
+[57] "nummail-8"            "sum.added.total-8"    "sum.removed.total-8"  "chain-8"              "CD-8"                 "max.file.changed-9"   "numjavafile-9"       
+[64] "nummail-9"            "sum.added.total-9"    "sum.removed.total-9"  "chain-9"              "CD-9"                 "max.file.changed-10"  "numjavafile-10"      
+[71] "nummail-10"           "sum.added.total-10"   "sum.removed.total-10" "chain-10"             "CD-10"                "max.file.changed-11"  "numjavafile-11"      
+[78] "nummail-11"           "sum.added.total-11"   "sum.removed.total-11" "chain-11"             "CD-11"                "max.file.changed-12"  "numjavafile-12"      
+[85] "nummail-12"           "sum.added.total-12"   "sum.removed.total-12" "chain-12"             "CD-12"               
+Aggregating results
+Selecting tuning parameters
+Fitting fL = 0, usekernel = FALSE, adjust = 1 on full training set
+[1] "Model: nb"
+ [1] "chain"                "max.file.changed-1"   "numjavafile-1"        "nummail-1"            "sum.added.total-1"    "sum.removed.total-1"  "chain-1"             
+ [8] "CD-1"                 "max.file.changed-2"   "numjavafile-2"        "nummail-2"            "sum.added.total-2"    "sum.removed.total-2"  "sum.removed.file-2"  
+[15] "chain-2"              "CD-2"                 "max.file.changed-3"   "numjavafile-3"        "nummail-3"            "sum.added.total-3"    "sum.removed.total-3" 
+[22] "chain-3"              "CD-3"                 "max.file.changed-4"   "numjavafile-4"        "nummail-4"            "sum.added.total-4"    "sum.removed.total-4" 
+[29] "chain-4"              "CD-4"                 "max.file.changed-5"   "numjavafile-5"        "nummail-5"            "sum.added.total-5"    "sum.removed.total-5" 
+[36] "sum.removed.file-5"   "chain-5"              "CD-5"                 "max.file.changed-6"   "numjavafile-6"        "nummail-6"            "sum.added.total-6"   
+[43] "sum.removed.total-6"  "sum.removed.file-6"   "chain-6"              "CD-6"                 "max.file.changed-7"   "numjavafile-7"        "nummail-7"           
+[50] "sum.added.total-7"    "sum.removed.total-7"  "sum.removed.file-7"   "chain-7"              "CD-7"                 "max.file.changed-8"   "numjavafile-8"       
+[57] "nummail-8"            "sum.added.total-8"    "sum.removed.total-8"  "chain-8"              "CD-8"                 "max.file.changed-9"   "numjavafile-9"       
+[64] "nummail-9"            "sum.added.total-9"    "sum.removed.total-9"  "chain-9"              "CD-9"                 "max.file.changed-10"  "numjavafile-10"      
+[71] "nummail-10"           "sum.added.total-10"   "sum.removed.total-10" "chain-10"             "CD-10"                "max.file.changed-11"  "numjavafile-11"      
+[78] "nummail-11"           "sum.added.total-11"   "sum.removed.total-11" "chain-11"             "CD-11"                "max.file.changed-12"  "numjavafile-12"      
+[85] "nummail-12"           "sum.added.total-12"   "sum.removed.total-12" "chain-12"             "CD-12"               
+Aggregating results
+Selecting tuning parameters
+Fitting fL = 0, usekernel = FALSE, adjust = 1 on full training set
+[1] "Model: nb"
+ [1] "CD"                   "max.file.changed-1"   "numjavafile-1"        "nummail-1"            "sum.added.total-1"    "sum.removed.total-1"  "chain-1"             
+ [8] "CD-1"                 "max.file.changed-2"   "numjavafile-2"        "nummail-2"            "sum.added.total-2"    "sum.removed.total-2"  "sum.removed.file-2"  
+[15] "chain-2"              "CD-2"                 "max.file.changed-3"   "numjavafile-3"        "nummail-3"            "sum.added.total-3"    "sum.removed.total-3" 
+[22] "chain-3"              "CD-3"                 "max.file.changed-4"   "numjavafile-4"        "nummail-4"            "sum.added.total-4"    "sum.removed.total-4" 
+[29] "chain-4"              "CD-4"                 "max.file.changed-5"   "numjavafile-5"        "nummail-5"            "sum.added.total-5"    "sum.removed.total-5" 
+[36] "sum.removed.file-5"   "chain-5"              "CD-5"                 "max.file.changed-6"   "numjavafile-6"        "nummail-6"            "sum.added.total-6"   
+[43] "sum.removed.total-6"  "sum.removed.file-6"   "chain-6"              "CD-6"                 "max.file.changed-7"   "numjavafile-7"        "nummail-7"           
+[50] "sum.added.total-7"    "sum.removed.total-7"  "sum.removed.file-7"   "chain-7"              "CD-7"                 "max.file.changed-8"   "numjavafile-8"       
+[57] "nummail-8"            "sum.added.total-8"    "sum.removed.total-8"  "chain-8"              "CD-8"                 "max.file.changed-9"   "numjavafile-9"       
+[64] "nummail-9"            "sum.added.total-9"    "sum.removed.total-9"  "chain-9"              "CD-9"                 "max.file.changed-10"  "numjavafile-10"      
+[71] "nummail-10"           "sum.added.total-10"   "sum.removed.total-10" "chain-10"             "CD-10"                "max.file.changed-11"  "numjavafile-11"      
+[78] "nummail-11"           "sum.added.total-11"   "sum.removed.total-11" "chain-11"             "CD-11"                "max.file.changed-12"  "numjavafile-12"      
+[85] "nummail-12"           "sum.added.total-12"   "sum.removed.total-12" "chain-12"             "CD-12"               
+Aggregating results
+Selecting tuning parameters
+Fitting fL = 0, usekernel = FALSE, adjust = 1 on full training set
+[1] "Model: nb"
+ [1] "IXPD"                 "max.file.changed-1"   "numjavafile-1"        "nummail-1"            "sum.added.total-1"    "sum.removed.total-1"  "chain-1"             
+ [8] "CD-1"                 "max.file.changed-2"   "numjavafile-2"        "nummail-2"            "sum.added.total-2"    "sum.removed.total-2"  "sum.removed.file-2"  
+[15] "chain-2"              "CD-2"                 "max.file.changed-3"   "numjavafile-3"        "nummail-3"            "sum.added.total-3"    "sum.removed.total-3" 
+[22] "chain-3"              "CD-3"                 "max.file.changed-4"   "numjavafile-4"        "nummail-4"            "sum.added.total-4"    "sum.removed.total-4" 
+[29] "chain-4"              "CD-4"                 "max.file.changed-5"   "numjavafile-5"        "nummail-5"            "sum.added.total-5"    "sum.removed.total-5" 
+[36] "sum.removed.file-5"   "chain-5"              "CD-5"                 "max.file.changed-6"   "numjavafile-6"        "nummail-6"            "sum.added.total-6"   
+[43] "sum.removed.total-6"  "sum.removed.file-6"   "chain-6"              "CD-6"                 "max.file.changed-7"   "numjavafile-7"        "nummail-7"           
+[50] "sum.added.total-7"    "sum.removed.total-7"  "sum.removed.file-7"   "chain-7"              "CD-7"                 "max.file.changed-8"   "numjavafile-8"       
+[57] "nummail-8"            "sum.added.total-8"    "sum.removed.total-8"  "chain-8"              "CD-8"                 "max.file.changed-9"   "numjavafile-9"       
+[64] "nummail-9"            "sum.added.total-9"    "sum.removed.total-9"  "chain-9"              "CD-9"                 "max.file.changed-10"  "numjavafile-10"      
+[71] "nummail-10"           "sum.added.total-10"   "sum.removed.total-10" "chain-10"             "CD-10"                "max.file.changed-11"  "numjavafile-11"      
+[78] "nummail-11"           "sum.added.total-11"   "sum.removed.total-11" "chain-11"             "CD-11"                "max.file.changed-12"  "numjavafile-12"      
+[85] "nummail-12"           "sum.added.total-12"   "sum.removed.total-12" "chain-12"             "CD-12"               
+Aggregating results
+Selecting tuning parameters
+Fitting fL = 0, usekernel = TRUE, adjust = 1 on full training set
+[1] "Model: C5.0"
+ [1] "star"                 "max.file.changed-1"   "numjavafile-1"        "nummail-1"            "sum.added.total-1"    "sum.removed.total-1"  "chain-1"             
+ [8] "CD-1"                 "max.file.changed-2"   "numjavafile-2"        "nummail-2"            "sum.added.total-2"    "sum.removed.total-2"  "sum.removed.file-2"  
+[15] "chain-2"              "CD-2"                 "max.file.changed-3"   "numjavafile-3"        "nummail-3"            "sum.added.total-3"    "sum.removed.total-3" 
+[22] "chain-3"              "CD-3"                 "max.file.changed-4"   "numjavafile-4"        "nummail-4"            "sum.added.total-4"    "sum.removed.total-4" 
+[29] "chain-4"              "CD-4"                 "max.file.changed-5"   "numjavafile-5"        "nummail-5"            "sum.added.total-5"    "sum.removed.total-5" 
+[36] "sum.removed.file-5"   "chain-5"              "CD-5"                 "max.file.changed-6"   "numjavafile-6"        "nummail-6"            "sum.added.total-6"   
+[43] "sum.removed.total-6"  "sum.removed.file-6"   "chain-6"              "CD-6"                 "max.file.changed-7"   "numjavafile-7"        "nummail-7"           
+[50] "sum.added.total-7"    "sum.removed.total-7"  "sum.removed.file-7"   "chain-7"              "CD-7"                 "max.file.changed-8"   "numjavafile-8"       
+[57] "nummail-8"            "sum.added.total-8"    "sum.removed.total-8"  "chain-8"              "CD-8"                 "max.file.changed-9"   "numjavafile-9"       
+[64] "nummail-9"            "sum.added.total-9"    "sum.removed.total-9"  "chain-9"              "CD-9"                 "max.file.changed-10"  "numjavafile-10"      
+[71] "nummail-10"           "sum.added.total-10"   "sum.removed.total-10" "chain-10"             "CD-10"                "max.file.changed-11"  "numjavafile-11"      
+[78] "nummail-11"           "sum.added.total-11"   "sum.removed.total-11" "chain-11"             "CD-11"                "max.file.changed-12"  "numjavafile-12"      
+[85] "nummail-12"           "sum.added.total-12"   "sum.removed.total-12" "chain-12"             "CD-12"               
+Aggregating results
+Selecting tuning parameters
+Fitting trials = 20, model = rules, winnow = TRUE on full training set
+[1] "Model: C5.0"
+ [1] "clique"               "max.file.changed-1"   "numjavafile-1"        "nummail-1"            "sum.added.total-1"    "sum.removed.total-1"  "chain-1"             
+ [8] "CD-1"                 "max.file.changed-2"   "numjavafile-2"        "nummail-2"            "sum.added.total-2"    "sum.removed.total-2"  "sum.removed.file-2"  
+[15] "chain-2"              "CD-2"                 "max.file.changed-3"   "numjavafile-3"        "nummail-3"            "sum.added.total-3"    "sum.removed.total-3" 
+[22] "chain-3"              "CD-3"                 "max.file.changed-4"   "numjavafile-4"        "nummail-4"            "sum.added.total-4"    "sum.removed.total-4" 
+[29] "chain-4"              "CD-4"                 "max.file.changed-5"   "numjavafile-5"        "nummail-5"            "sum.added.total-5"    "sum.removed.total-5" 
+[36] "sum.removed.file-5"   "chain-5"              "CD-5"                 "max.file.changed-6"   "numjavafile-6"        "nummail-6"            "sum.added.total-6"   
+[43] "sum.removed.total-6"  "sum.removed.file-6"   "chain-6"              "CD-6"                 "max.file.changed-7"   "numjavafile-7"        "nummail-7"           
+[50] "sum.added.total-7"    "sum.removed.total-7"  "sum.removed.file-7"   "chain-7"              "CD-7"                 "max.file.changed-8"   "numjavafile-8"       
+[57] "nummail-8"            "sum.added.total-8"    "sum.removed.total-8"  "chain-8"              "CD-8"                 "max.file.changed-9"   "numjavafile-9"       
+[64] "nummail-9"            "sum.added.total-9"    "sum.removed.total-9"  "chain-9"              "CD-9"                 "max.file.changed-10"  "numjavafile-10"      
+[71] "nummail-10"           "sum.added.total-10"   "sum.removed.total-10" "chain-10"             "CD-10"                "max.file.changed-11"  "numjavafile-11"      
+[78] "nummail-11"           "sum.added.total-11"   "sum.removed.total-11" "chain-11"             "CD-11"                "max.file.changed-12"  "numjavafile-12"      
+[85] "nummail-12"           "sum.added.total-12"   "sum.removed.total-12" "chain-12"             "CD-12"               
+Aggregating results
+Selecting tuning parameters
+Fitting trials = 20, model = rules, winnow = TRUE on full training set
+[1] "Model: C5.0"
+ [1] "chain"                "max.file.changed-1"   "numjavafile-1"        "nummail-1"            "sum.added.total-1"    "sum.removed.total-1"  "chain-1"             
+ [8] "CD-1"                 "max.file.changed-2"   "numjavafile-2"        "nummail-2"            "sum.added.total-2"    "sum.removed.total-2"  "sum.removed.file-2"  
+[15] "chain-2"              "CD-2"                 "max.file.changed-3"   "numjavafile-3"        "nummail-3"            "sum.added.total-3"    "sum.removed.total-3" 
+[22] "chain-3"              "CD-3"                 "max.file.changed-4"   "numjavafile-4"        "nummail-4"            "sum.added.total-4"    "sum.removed.total-4" 
+[29] "chain-4"              "CD-4"                 "max.file.changed-5"   "numjavafile-5"        "nummail-5"            "sum.added.total-5"    "sum.removed.total-5" 
+[36] "sum.removed.file-5"   "chain-5"              "CD-5"                 "max.file.changed-6"   "numjavafile-6"        "nummail-6"            "sum.added.total-6"   
+[43] "sum.removed.total-6"  "sum.removed.file-6"   "chain-6"              "CD-6"                 "max.file.changed-7"   "numjavafile-7"        "nummail-7"           
+[50] "sum.added.total-7"    "sum.removed.total-7"  "sum.removed.file-7"   "chain-7"              "CD-7"                 "max.file.changed-8"   "numjavafile-8"       
+[57] "nummail-8"            "sum.added.total-8"    "sum.removed.total-8"  "chain-8"              "CD-8"                 "max.file.changed-9"   "numjavafile-9"       
+[64] "nummail-9"            "sum.added.total-9"    "sum.removed.total-9"  "chain-9"              "CD-9"                 "max.file.changed-10"  "numjavafile-10"      
+[71] "nummail-10"           "sum.added.total-10"   "sum.removed.total-10" "chain-10"             "CD-10"                "max.file.changed-11"  "numjavafile-11"      
+[78] "nummail-11"           "sum.added.total-11"   "sum.removed.total-11" "chain-11"             "CD-11"                "max.file.changed-12"  "numjavafile-12"      
+[85] "nummail-12"           "sum.added.total-12"   "sum.removed.total-12" "chain-12"             "CD-12"               
+Aggregating results
+Selecting tuning parameters
+Fitting trials = 1, model = tree, winnow = FALSE on full training set
+[1] "Model: C5.0"
+ [1] "CD"                   "max.file.changed-1"   "numjavafile-1"        "nummail-1"            "sum.added.total-1"    "sum.removed.total-1"  "chain-1"             
+ [8] "CD-1"                 "max.file.changed-2"   "numjavafile-2"        "nummail-2"            "sum.added.total-2"    "sum.removed.total-2"  "sum.removed.file-2"  
+[15] "chain-2"              "CD-2"                 "max.file.changed-3"   "numjavafile-3"        "nummail-3"            "sum.added.total-3"    "sum.removed.total-3" 
+[22] "chain-3"              "CD-3"                 "max.file.changed-4"   "numjavafile-4"        "nummail-4"            "sum.added.total-4"    "sum.removed.total-4" 
+[29] "chain-4"              "CD-4"                 "max.file.changed-5"   "numjavafile-5"        "nummail-5"            "sum.added.total-5"    "sum.removed.total-5" 
+[36] "sum.removed.file-5"   "chain-5"              "CD-5"                 "max.file.changed-6"   "numjavafile-6"        "nummail-6"            "sum.added.total-6"   
+[43] "sum.removed.total-6"  "sum.removed.file-6"   "chain-6"              "CD-6"                 "max.file.changed-7"   "numjavafile-7"        "nummail-7"           
+[50] "sum.added.total-7"    "sum.removed.total-7"  "sum.removed.file-7"   "chain-7"              "CD-7"                 "max.file.changed-8"   "numjavafile-8"       
+[57] "nummail-8"            "sum.added.total-8"    "sum.removed.total-8"  "chain-8"              "CD-8"                 "max.file.changed-9"   "numjavafile-9"       
+[64] "nummail-9"            "sum.added.total-9"    "sum.removed.total-9"  "chain-9"              "CD-9"                 "max.file.changed-10"  "numjavafile-10"      
+[71] "nummail-10"           "sum.added.total-10"   "sum.removed.total-10" "chain-10"             "CD-10"                "max.file.changed-11"  "numjavafile-11"      
+[78] "nummail-11"           "sum.added.total-11"   "sum.removed.total-11" "chain-11"             "CD-11"                "max.file.changed-12"  "numjavafile-12"      
+[85] "nummail-12"           "sum.added.total-12"   "sum.removed.total-12" "chain-12"             "CD-12"               
+Aggregating results
+Selecting tuning parameters
+Fitting trials = 10, model = tree, winnow = FALSE on full training set
+[1] "Model: C5.0"
+ [1] "IXPD"                 "max.file.changed-1"   "numjavafile-1"        "nummail-1"            "sum.added.total-1"    "sum.removed.total-1"  "chain-1"             
+ [8] "CD-1"                 "max.file.changed-2"   "numjavafile-2"        "nummail-2"            "sum.added.total-2"    "sum.removed.total-2"  "sum.removed.file-2"  
+[15] "chain-2"              "CD-2"                 "max.file.changed-3"   "numjavafile-3"        "nummail-3"            "sum.added.total-3"    "sum.removed.total-3" 
+[22] "chain-3"              "CD-3"                 "max.file.changed-4"   "numjavafile-4"        "nummail-4"            "sum.added.total-4"    "sum.removed.total-4" 
+[29] "chain-4"              "CD-4"                 "max.file.changed-5"   "numjavafile-5"        "nummail-5"            "sum.added.total-5"    "sum.removed.total-5" 
+[36] "sum.removed.file-5"   "chain-5"              "CD-5"                 "max.file.changed-6"   "numjavafile-6"        "nummail-6"            "sum.added.total-6"   
+[43] "sum.removed.total-6"  "sum.removed.file-6"   "chain-6"              "CD-6"                 "max.file.changed-7"   "numjavafile-7"        "nummail-7"           
+[50] "sum.added.total-7"    "sum.removed.total-7"  "sum.removed.file-7"   "chain-7"              "CD-7"                 "max.file.changed-8"   "numjavafile-8"       
+[57] "nummail-8"            "sum.added.total-8"    "sum.removed.total-8"  "chain-8"              "CD-8"                 "max.file.changed-9"   "numjavafile-9"       
+[64] "nummail-9"            "sum.added.total-9"    "sum.removed.total-9"  "chain-9"              "CD-9"                 "max.file.changed-10"  "numjavafile-10"      
+[71] "nummail-10"           "sum.added.total-10"   "sum.removed.total-10" "chain-10"             "CD-10"                "max.file.changed-11"  "numjavafile-11"      
+[78] "nummail-11"           "sum.added.total-11"   "sum.removed.total-11" "chain-11"             "CD-11"                "max.file.changed-12"  "numjavafile-12"      
+[85] "nummail-12"           "sum.added.total-12"   "sum.removed.total-12" "chain-12"             "CD-12"               
+Aggregating results
+Selecting tuning parameters
+Fitting trials = 20, model = tree, winnow = FALSE on full training set
+[1] "Model: rf"
+ [1] "star"                 "max.file.changed-1"   "numjavafile-1"        "nummail-1"            "sum.added.total-1"    "sum.removed.total-1"  "chain-1"             
+ [8] "CD-1"                 "max.file.changed-2"   "numjavafile-2"        "nummail-2"            "sum.added.total-2"    "sum.removed.total-2"  "sum.removed.file-2"  
+[15] "chain-2"              "CD-2"                 "max.file.changed-3"   "numjavafile-3"        "nummail-3"            "sum.added.total-3"    "sum.removed.total-3" 
+[22] "chain-3"              "CD-3"                 "max.file.changed-4"   "numjavafile-4"        "nummail-4"            "sum.added.total-4"    "sum.removed.total-4" 
+[29] "chain-4"              "CD-4"                 "max.file.changed-5"   "numjavafile-5"        "nummail-5"            "sum.added.total-5"    "sum.removed.total-5" 
+[36] "sum.removed.file-5"   "chain-5"              "CD-5"                 "max.file.changed-6"   "numjavafile-6"        "nummail-6"            "sum.added.total-6"   
+[43] "sum.removed.total-6"  "sum.removed.file-6"   "chain-6"              "CD-6"                 "max.file.changed-7"   "numjavafile-7"        "nummail-7"           
+[50] "sum.added.total-7"    "sum.removed.total-7"  "sum.removed.file-7"   "chain-7"              "CD-7"                 "max.file.changed-8"   "numjavafile-8"       
+[57] "nummail-8"            "sum.added.total-8"    "sum.removed.total-8"  "chain-8"              "CD-8"                 "max.file.changed-9"   "numjavafile-9"       
+[64] "nummail-9"            "sum.added.total-9"    "sum.removed.total-9"  "chain-9"              "CD-9"                 "max.file.changed-10"  "numjavafile-10"      
+[71] "nummail-10"           "sum.added.total-10"   "sum.removed.total-10" "chain-10"             "CD-10"                "max.file.changed-11"  "numjavafile-11"      
+[78] "nummail-11"           "sum.added.total-11"   "sum.removed.total-11" "chain-11"             "CD-11"                "max.file.changed-12"  "numjavafile-12"      
+[85] "nummail-12"           "sum.added.total-12"   "sum.removed.total-12" "chain-12"             "CD-12"               
+Aggregating results
+Selecting tuning parameters
+Fitting mtry = 45 on full training set
+[1] "Model: rf"
+ [1] "clique"               "max.file.changed-1"   "numjavafile-1"        "nummail-1"            "sum.added.total-1"    "sum.removed.total-1"  "chain-1"             
+ [8] "CD-1"                 "max.file.changed-2"   "numjavafile-2"        "nummail-2"            "sum.added.total-2"    "sum.removed.total-2"  "sum.removed.file-2"  
+[15] "chain-2"              "CD-2"                 "max.file.changed-3"   "numjavafile-3"        "nummail-3"            "sum.added.total-3"    "sum.removed.total-3" 
+[22] "chain-3"              "CD-3"                 "max.file.changed-4"   "numjavafile-4"        "nummail-4"            "sum.added.total-4"    "sum.removed.total-4" 
+[29] "chain-4"              "CD-4"                 "max.file.changed-5"   "numjavafile-5"        "nummail-5"            "sum.added.total-5"    "sum.removed.total-5" 
+[36] "sum.removed.file-5"   "chain-5"              "CD-5"                 "max.file.changed-6"   "numjavafile-6"        "nummail-6"            "sum.added.total-6"   
+[43] "sum.removed.total-6"  "sum.removed.file-6"   "chain-6"              "CD-6"                 "max.file.changed-7"   "numjavafile-7"        "nummail-7"           
+[50] "sum.added.total-7"    "sum.removed.total-7"  "sum.removed.file-7"   "chain-7"              "CD-7"                 "max.file.changed-8"   "numjavafile-8"       
+[57] "nummail-8"            "sum.added.total-8"    "sum.removed.total-8"  "chain-8"              "CD-8"                 "max.file.changed-9"   "numjavafile-9"       
+[64] "nummail-9"            "sum.added.total-9"    "sum.removed.total-9"  "chain-9"              "CD-9"                 "max.file.changed-10"  "numjavafile-10"      
+[71] "nummail-10"           "sum.added.total-10"   "sum.removed.total-10" "chain-10"             "CD-10"                "max.file.changed-11"  "numjavafile-11"      
+[78] "nummail-11"           "sum.added.total-11"   "sum.removed.total-11" "chain-11"             "CD-11"                "max.file.changed-12"  "numjavafile-12"      
+[85] "nummail-12"           "sum.added.total-12"   "sum.removed.total-12" "chain-12"             "CD-12"               
+Aggregating results
+Selecting tuning parameters
+Fitting mtry = 45 on full training set
+[1] "Model: rf"
+ [1] "chain"                "max.file.changed-1"   "numjavafile-1"        "nummail-1"            "sum.added.total-1"    "sum.removed.total-1"  "chain-1"             
+ [8] "CD-1"                 "max.file.changed-2"   "numjavafile-2"        "nummail-2"            "sum.added.total-2"    "sum.removed.total-2"  "sum.removed.file-2"  
+[15] "chain-2"              "CD-2"                 "max.file.changed-3"   "numjavafile-3"        "nummail-3"            "sum.added.total-3"    "sum.removed.total-3" 
+[22] "chain-3"              "CD-3"                 "max.file.changed-4"   "numjavafile-4"        "nummail-4"            "sum.added.total-4"    "sum.removed.total-4" 
+[29] "chain-4"              "CD-4"                 "max.file.changed-5"   "numjavafile-5"        "nummail-5"            "sum.added.total-5"    "sum.removed.total-5" 
+[36] "sum.removed.file-5"   "chain-5"              "CD-5"                 "max.file.changed-6"   "numjavafile-6"        "nummail-6"            "sum.added.total-6"   
+[43] "sum.removed.total-6"  "sum.removed.file-6"   "chain-6"              "CD-6"                 "max.file.changed-7"   "numjavafile-7"        "nummail-7"           
+[50] "sum.added.total-7"    "sum.removed.total-7"  "sum.removed.file-7"   "chain-7"              "CD-7"                 "max.file.changed-8"   "numjavafile-8"       
+[57] "nummail-8"            "sum.added.total-8"    "sum.removed.total-8"  "chain-8"              "CD-8"                 "max.file.changed-9"   "numjavafile-9"       
+[64] "nummail-9"            "sum.added.total-9"    "sum.removed.total-9"  "chain-9"              "CD-9"                 "max.file.changed-10"  "numjavafile-10"      
+[71] "nummail-10"           "sum.added.total-10"   "sum.removed.total-10" "chain-10"             "CD-10"                "max.file.changed-11"  "numjavafile-11"      
+[78] "nummail-11"           "sum.added.total-11"   "sum.removed.total-11" "chain-11"             "CD-11"                "max.file.changed-12"  "numjavafile-12"      
+[85] "nummail-12"           "sum.added.total-12"   "sum.removed.total-12" "chain-12"             "CD-12"               
+Aggregating results
+Selecting tuning parameters
+Fitting mtry = 45 on full training set
+[1] "Model: rf"
+ [1] "CD"                   "max.file.changed-1"   "numjavafile-1"        "nummail-1"            "sum.added.total-1"    "sum.removed.total-1"  "chain-1"             
+ [8] "CD-1"                 "max.file.changed-2"   "numjavafile-2"        "nummail-2"            "sum.added.total-2"    "sum.removed.total-2"  "sum.removed.file-2"  
+[15] "chain-2"              "CD-2"                 "max.file.changed-3"   "numjavafile-3"        "nummail-3"            "sum.added.total-3"    "sum.removed.total-3" 
+[22] "chain-3"              "CD-3"                 "max.file.changed-4"   "numjavafile-4"        "nummail-4"            "sum.added.total-4"    "sum.removed.total-4" 
+[29] "chain-4"              "CD-4"                 "max.file.changed-5"   "numjavafile-5"        "nummail-5"            "sum.added.total-5"    "sum.removed.total-5" 
+[36] "sum.removed.file-5"   "chain-5"              "CD-5"                 "max.file.changed-6"   "numjavafile-6"        "nummail-6"            "sum.added.total-6"   
+[43] "sum.removed.total-6"  "sum.removed.file-6"   "chain-6"              "CD-6"                 "max.file.changed-7"   "numjavafile-7"        "nummail-7"           
+[50] "sum.added.total-7"    "sum.removed.total-7"  "sum.removed.file-7"   "chain-7"              "CD-7"                 "max.file.changed-8"   "numjavafile-8"       
+[57] "nummail-8"            "sum.added.total-8"    "sum.removed.total-8"  "chain-8"              "CD-8"                 "max.file.changed-9"   "numjavafile-9"       
+[64] "nummail-9"            "sum.added.total-9"    "sum.removed.total-9"  "chain-9"              "CD-9"                 "max.file.changed-10"  "numjavafile-10"      
+[71] "nummail-10"           "sum.added.total-10"   "sum.removed.total-10" "chain-10"             "CD-10"                "max.file.changed-11"  "numjavafile-11"      
+[78] "nummail-11"           "sum.added.total-11"   "sum.removed.total-11" "chain-11"             "CD-11"                "max.file.changed-12"  "numjavafile-12"      
+[85] "nummail-12"           "sum.added.total-12"   "sum.removed.total-12" "chain-12"             "CD-12"               
+Aggregating results
+Selecting tuning parameters
+Fitting mtry = 45 on full training set
+[1] "Model: rf"
+ [1] "IXPD"                 "max.file.changed-1"   "numjavafile-1"        "nummail-1"            "sum.added.total-1"    "sum.removed.total-1"  "chain-1"             
+ [8] "CD-1"                 "max.file.changed-2"   "numjavafile-2"        "nummail-2"            "sum.added.total-2"    "sum.removed.total-2"  "sum.removed.file-2"  
+[15] "chain-2"              "CD-2"                 "max.file.changed-3"   "numjavafile-3"        "nummail-3"            "sum.added.total-3"    "sum.removed.total-3" 
+[22] "chain-3"              "CD-3"                 "max.file.changed-4"   "numjavafile-4"        "nummail-4"            "sum.added.total-4"    "sum.removed.total-4" 
+[29] "chain-4"              "CD-4"                 "max.file.changed-5"   "numjavafile-5"        "nummail-5"            "sum.added.total-5"    "sum.removed.total-5" 
+[36] "sum.removed.file-5"   "chain-5"              "CD-5"                 "max.file.changed-6"   "numjavafile-6"        "nummail-6"            "sum.added.total-6"   
+[43] "sum.removed.total-6"  "sum.removed.file-6"   "chain-6"              "CD-6"                 "max.file.changed-7"   "numjavafile-7"        "nummail-7"           
+[50] "sum.added.total-7"    "sum.removed.total-7"  "sum.removed.file-7"   "chain-7"              "CD-7"                 "max.file.changed-8"   "numjavafile-8"       
+[57] "nummail-8"            "sum.added.total-8"    "sum.removed.total-8"  "chain-8"              "CD-8"                 "max.file.changed-9"   "numjavafile-9"       
+[64] "nummail-9"            "sum.added.total-9"    "sum.removed.total-9"  "chain-9"              "CD-9"                 "max.file.changed-10"  "numjavafile-10"      
+[71] "nummail-10"           "sum.added.total-10"   "sum.removed.total-10" "chain-10"             "CD-10"                "max.file.changed-11"  "numjavafile-11"      
+[78] "nummail-11"           "sum.added.total-11"   "sum.removed.total-11" "chain-11"             "CD-11"                "max.file.changed-12"  "numjavafile-12"      
+[85] "nummail-12"           "sum.added.total-12"   "sum.removed.total-12" "chain-12"             "CD-12"               
+Aggregating results
+Selecting tuning parameters
+Fitting mtry = 88 on full training set
+
+
+```{r only the best model of jrip - C5.0}
+tuneGridf <- function(currentShape){
+  if(currentShape=="star"){
+    data.frame(trials=20, model="rules", winnow=TRUE)
+    #data.frame(trials=1, model="tree", winnow=TRUE)
+  }
+  if(currentShape=="clique"){
+    data.frame(trials=20, model="rules", winnow=TRUE)
+  }
+  if(currentShape=="chain"){
+    data.frame(trials=1, model="tree", winnow=FALSE)
+  }
+  if(currentShape=="CD"){
+    data.frame(trials=10, model="tree", winnow=FALSE)
+  }
+  if(currentShape=="IXPD"){
+    data.frame(trials=20, model="tree", winnow=FALSE)
+  }
+  else{
+    data.frame(trials=20, model="rules", winnow=FALSE)
+  }
+}
+run50CV <- function(lagged, .models, .shapes, .outfilePrefix = "") {
+  # Generate all combinations of targets and models to test
+  experiments <- expand.grid(shape = .shapes, model = .models)
+  print(experiments)
+  alply(experiments, .margins = 1, function(experiment) {#aaply(array) alply(liste)
+    currentShape <- paste(experiment[1, "shape"])
+    currentModel <- paste(experiment[1, "model"])
+     print(currentShape)
+     print(currentModel)
+     print(names(lagged))
+    if (currentShape %in% as.list(names(lagged))) {
+      # Keep only lagged columns in the dataset, plus the class
+      lagged.train <- cbind(lagged[c(currentShape)],
+                            lagged[grep("-", names(lagged))])
+      names(lagged.train)<-as.vector(gsub("-", "", names(lagged.train)))
+      print(paste("Model:", currentModel))
+      print(names(lagged.train))
+      # do only a single configuration
+      fitControlSingle <- trainControl(method = "none")#, classProbs = TRUE)
+      fit <- train(form=as.formula(paste(currentShape, "~ .")),
+                   data = lagged.train,
+                   method = currentModel,
+                   trControl = fitControlSingle
+                   # ,tuneGrid =tuneGridf(currentShape)
+                    ,tuneGrid = data.frame(NumOpt=2,
+                                              NumFolds=3,
+                                              MinWeights=2)
+                   # ,metric = "ROC"
+                   )
+      print(fit)
+      fit
+    } else {
+      data.frame()
+    }
+  })
+}
+```
+
+
+```{r only the best model of jrip - C5.0 execution}
+
+
+pkg.dataset.nzv.binary <- as.data.frame(cbind(pkg.dataset.nzv[c("star","clique","chain","CD","IXPD")],
+                                              ifelse(pkg.dataset.nzv[grep("-", names(pkg.dataset.nzv))]<1,0,1)))
+# modelLookup("C5.0")
+# models <- c("C5.0") # "C5.0" "logreg" has some issues, should be tested outside
+# set.seed(825)
+# trainC50 <- run50CV(pkg.dataset.nzv.binary, models, targets, "dev.only.tomcat-")
+
+modelLookup("JRip")
+models <- c("JRip")
+set.seed(825)
+trainjrip <- run50CV(pkg.dataset.nzv.binary, models, targets, "dev.only.tomcat-")
+# write.csv(pkg.dataset.nzv.binary, "dev.only.tomcat-cm-lagged-week.csv")
+
+c50.1 <- trainjrip$`1`$finalModel #star
+c50.2 <- trainjrip$`4`$finalModel #clique
+c50.3 <- trainjrip$`5`$finalModel #chain
+c50.4 <- trainjrip$`6`$finalModel #cd
+c50.5 <- trainjrip$`9`$finalModel #ixpd
+library(rJava)
+write(as.character(summary(c50.1)),"data/rule/dev.only.tomcat-jrip-month-c50.star.txt")
+write(as.matrix(scan(text=.jcall(c50.1$classifier, "S", "toString") ,sep="\n", what="") )[
+    -c(1:2, 6), ,drop=FALSE],"data/rule/dev.only.tomcat-jrip-month-c50.star.txt",append=TRUE)
+write(as.character(summary(c50.2)),"data/rule/dev.only.tomcat-jrip-month-c50.clique.txt")
+write(as.matrix(scan(text=.jcall(c50.2$classifier, "S", "toString") ,sep="\n", what="") )[
+    -c(1:2, 6), ,drop=FALSE],"data/rule/dev.only.tomcat-jrip-month-c50.clique.txt",append=TRUE)
+write(as.character(summary(c50.3)),"data/rule/dev.only.tomcat-jrip-month-c50.chain.txt")
+write(as.matrix(scan(text=.jcall(c50.3$classifier, "S", "toString") ,sep="\n", what="") )[
+    -c(1:2, 6), ,drop=FALSE],"data/rule/dev.only.tomcat-jrip-month-c50.chain.txt",append=TRUE)
+write(as.character(summary(c50.4)),"data/rule/dev.only.tomcat-jrip-month-c50.CD.txt")
+write(as.matrix(scan(text=.jcall(c50.4$classifier, "S", "toString") ,sep="\n", what="") )[
+    -c(1:2, 6), ,drop=FALSE],"data/rule/dev.only.tomcat-jrip-month-c50.CD.txt",append=TRUE)
+write(as.character(summary(c50.5)),"data/rule/dev.only.tomcat-jrip-month-c50.IXPD.txt")
+write(as.matrix(scan(text=.jcall(c50.5$classifier, "S", "toString") ,sep="\n", what="") )[
+    -c(1:2, 6), ,drop=FALSE],"data/rule/dev.only.tomcat-jrip-month-c50.IXPD.txt",append=TRUE)
+
+
+# c50.1 <- trainC50$`1`$finalModel
+# c50.2 <- trainC50$`4`$finalModel
+# c50.3 <- trainC50$`5`$finalModel
+# c50.4 <- trainC50$`6`$finalModel
+# c50.5 <- trainC50$`9`$finalModel
+# writeChar(as.character(summary(c50.1)),"data/rule/dev.only.tomcat-week-c50.star.txt")
+# writeChar(as.character(summary(c50.2)),"data/rule/dev.only.tomcat-week-c50.clique.txt")
+# writeChar(as.character(summary(c50.3)),"data/rule/dev.only.tomcat-week-c50.chain.txt")
+# writeChar(as.character(summary(c50.4)),"data/rule/dev.only.tomcat-week-c50.CD.txt")
+# writeChar(as.character(summary(c50.5)),"data/rule/dev.only.tomcat-week-c50.IXPD.txt")
+```
+
+
+```{r read all confusion matrices}
+# library(plyr)
+files <- list.files(path = "data/ml-results/tomcat/month", pattern = ".csv")
+# temp <- lapply(files, read.csv,header=TRUE,sep=",")
+readFromCsv <- function(filename, header=TRUE, sep=","){
+    ret <- read.csv(paste0("data/ml-results/tomcat/month/",filename),header,sep)
+    appo <- str_split_fixed(filename, "\\-",4)
+    ret$System <- appo[,1]
+    # ret$System <- appo[,2]
+    ret$Var <- appo[,3]
+    ret$Model <- gsub(".csv","",appo[,4])
+    ret$File <- filename #EDIT
+    ret
+}
+temp <- ldply(as.list(files), readFromCsv)
+write.csv(file = "all-md-ml.csv",temp)
+```
+
+```{r only the best model of jrip - C5.0}
+tuneGridf <- function(currentShape){
+  if(currentShape=="star"){
+      data.frame(trials = 20, model = "rules", winnow = TRUE)
+    #data.frame(trials=1, model="tree", winnow=TRUE)
+  }
+  if(currentShape=="clique"){
+      data.frame(trials = 10, model = "rules", winnow = FALSE)
+  }
+  if(currentShape=="chain"){
+      data.frame(trials = 20, model = "tree", winnow = TRUE)
+  }
+  if(currentShape=="CD"){
+    data.frame(trials=10, model="rules", winnow=FALSE)
+  }
+  if(currentShape=="IXPD"){
+    data.frame(trials=20, model="tree", winnow=FALSE)
+  }
+  else{
+    data.frame(trials=20, model="rules", winnow=FALSE)
+  }
+}
+run50CV <- function(lagged, .models, .shapes, .outfilePrefix = "") {
+  # Generate all combinations of targets and models to test
+  experiments <- expand.grid(shape = .shapes, model = .models)
+  print(experiments)
+  alply(experiments, .margins = 1, function(experiment) {#aaply(array) alply(liste)
+    currentShape <- paste(experiment[1, "shape"])
+    currentModel <- paste(experiment[1, "model"])
+     print(currentShape)
+     print(currentModel)
+     print(names(lagged))
+    if (currentShape %in% as.list(names(lagged))) {
+      # Keep only lagged columns in the dataset, plus the class
+      lagged.train <- cbind(lagged[c(currentShape)],
+                            lagged[grep("-", names(lagged))])
+      names(lagged.train)<-as.vector(gsub("-", "", names(lagged.train)))
+      print(paste("Model:", currentModel))
+      print(names(lagged.train))
+      # do only a single configuration
+      fitControlSingle <- trainControl(method = "none")#, classProbs = TRUE)
+      fit <- train(form=as.formula(paste(currentShape, "~ .")),
+                   data = lagged.train,
+                   method = currentModel,
+                   trControl = fitControlSingle
+                   # ,tuneGrid =tuneGridf(currentShape)
+                    ,tuneGrid = data.frame(NumOpt=2,
+                                              NumFolds=3,
+                                              MinWeights=2)
+                   # ,metric = "ROC"
+                   )
+      print(fit)
+      fit
+    } else {
+      data.frame()
+    }
+  })
+}
+```
+
+
+```{r only the best model of jrip - C5.0 execution}
+
+
+pkg.dataset.nzv.binary <- as.data.frame(cbind(pkg.dataset.nzv[c("star","clique","chain","CD","IXPD")],
+                                              ifelse(pkg.dataset.nzv[grep("-", names(pkg.dataset.nzv))]<1,0,1)))
+# modelLookup("C5.0")
+# models <- c("C5.0") # "C5.0" "logreg" has some issues, should be tested outside
+# set.seed(825)
+# trainC50 <- run50CV(pkg.dataset.nzv.binary, models, targets, "dev.only.tomcat-")
+
+modelLookup("JRip")
+models <- c("JRip")
+set.seed(825)
+trainjrip <- run50CV(pkg.dataset.nzv.binary, models, targets, "dev.only.tomcat-")
+# write.csv(pkg.dataset.nzv.binary, "dev.only.tomcat-cm-lagged-week.csv")
+
+c50.1 <- trainjrip$`1`$finalModel #star
+c50.2 <- trainjrip$`4`$finalModel #clique
+c50.3 <- trainjrip$`5`$finalModel #chain
+c50.4 <- trainjrip$`6`$finalModel #cd
+c50.5 <- trainjrip$`9`$finalModel #ixpd
+library(rJava)
+write(as.character(summary(c50.1)),"data/rule.smote/dev.only.tomcat-jrip-month-c50.star.txt")
+write(as.matrix(scan(text=.jcall(c50.1$classifier, "S", "toString") ,sep="\n", what="") )[
+    -c(1:2, 6), ,drop=FALSE],"data/rule.smote/dev.only.tomcat-jrip-month-c50.star.txt",append=TRUE)
+write(as.character(summary(c50.2)),"data/rule.smote/dev.only.tomcat-jrip-month-c50.clique.txt")
+write(as.matrix(scan(text=.jcall(c50.2$classifier, "S", "toString") ,sep="\n", what="") )[
+    -c(1:2, 6), ,drop=FALSE],"data/rule.smote/dev.only.tomcat-jrip-month-c50.clique.txt",append=TRUE)
+write(as.character(summary(c50.3)),"data/rule.smote/dev.only.tomcat-jrip-month-c50.chain.txt")
+write(as.matrix(scan(text=.jcall(c50.3$classifier, "S", "toString") ,sep="\n", what="") )[
+    -c(1:2, 6), ,drop=FALSE],"data/rule.smote/dev.only.tomcat-jrip-month-c50.chain.txt",append=TRUE)
+write(as.character(summary(c50.4)),"data/rule.smote/dev.only.tomcat-jrip-month-c50.CD.txt")
+write(as.matrix(scan(text=.jcall(c50.4$classifier, "S", "toString") ,sep="\n", what="") )[
+    -c(1:2, 6), ,drop=FALSE],"data/rule.smote/dev.only.tomcat-jrip-month-c50.CD.txt",append=TRUE)
+write(as.character(summary(c50.5)),"data/rule.smote/dev.only.tomcat-jrip-month-c50.IXPD.txt")
+write(as.matrix(scan(text=.jcall(c50.5$classifier, "S", "toString") ,sep="\n", what="") )[
+    -c(1:2, 6), ,drop=FALSE],"data/rule.smote/dev.only.tomcat-jrip-month-c50.IXPD.txt",append=TRUE)
+
+```
+
+

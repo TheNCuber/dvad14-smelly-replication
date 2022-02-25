@@ -1,0 +1,412 @@
+---
+title: "Machine Learning Algorithm"
+author: "Noah Bühlmann"
+date: "18 February 2022"
+output: html_document
+---
+
+```{r Load R libraries and set settings}
+options(java.parameters = "-Xmx12g")
+knitr::opts_chunk$set(cache = TRUE)
+
+library(plyr)
+library(DMwR)
+library(ggplot2)
+library(caret)
+library(stringr)
+library(RWeka)
+library(rJava)
+
+# Enable parallel execution if available
+if (.Platform$OS.type == "unix") {
+  library(doMC)
+  library(parallel)
+  registerDoMC(detectCores())
+}
+if (.Platform$OS.type == "windows") {
+  library(foreach)
+  library(doParallel)
+  registerDoParallel(detectCores())
+}
+
+print(paste("Detected OS is: ", .Platform$OS.type))
+print(paste("No. of cores: ", detectCores()))
+```
+
+```{r Read prepared package data}
+# Define helper function to convert ISO 8601 timestamp to UNIX timestamp
+to.timestamp.fromint <-
+  function(d) {
+    as.POSIXct(d, origin = "1970-01-01", tz = "GMT")
+  }
+
+# Read csv
+pkg.merged.df <-
+  read.csv("cache/jgit/package_merged.csv",
+    head = TRUE,
+    sep = ","
+  )
+pkg.merged.df$commit_time <-
+  to.timestamp.fromint(pkg.merged.df$commit_time)
+
+# Add missing column UD copying the number of correlated packages.
+# It will by transformed to a factor below.
+pkg.merged.df$UD <- pkg.merged.df$UDnumCorrelatedPackage
+pkg.merged.df <-
+  subset(
+    pkg.merged.df,
+    select = -c(
+      minRatio.out, minRatio.in, UDminInstabilityCorrelatedPackage, HLminFanIn,
+      HLminFanOut, HLminTD, maxRatio.out, maxRatio.in,
+      UDmaxInstabilityCorrelatedPackage, HLmaxFanIn, HLmaxFanOut, HLmaxTD,
+      meanRatio.out, meanRatio.in, UDmeanInstabilityCorrelatedPackage,
+      UDsdInstabilityCorrelatedPackage, HLmeanFanIn, HLsdFanIn, HLmeanFanOut,
+      HLsdFanOut, HLmeanTD, HLsdTD, InstabilityUnstableDependenciesPackage, RMA,
+      RMI, CE, CA, RMD
+    )
+  )
+head(pkg.merged.df)
+
+```
+
+```{r Group data by year-month-day}
+# Add new column commit_date with values YYYY-mm based on commit_time
+pkg.merged.df$commit_date <- factor(strftime(pkg.merged.df$commit_time, "%Y-%m"))
+
+# Remove columns ["version", "commit_time"]
+# Group by columns ["package", "commit_date"]
+# Aggregate metrics within groups
+pkg.merged.df <- ddply(pkg.merged.df[setdiff(names(pkg.merged.df), c("version", "commit_time"))],
+  .(package, commit_date),
+  function(slice) {
+    slice.cols <- setdiff(names(slice), c("package", "commit_date"))
+    cbind(
+      colwise(min)(slice[, slice.cols[grep("min", slice.cols)]]),
+      colwise(max)(slice[, slice.cols[grep("max", slice.cols)]]),
+      colwise(mean)(slice[, slice.cols[grep("(mean|sd)", slice.cols)]]),
+      colwise(sum)(slice[, slice.cols[grep("(min|max|mean|sd)", slice.cols, invert = TRUE)]])
+    )
+  },
+  .progress = "text"
+)
+head(pkg.merged.df)
+```
+
+```{r Define lagging algorithm}
+lag.df <- function(df, lags, colnames = names(df)) {
+  # nrow(df) has to be strictly greater than lags for this algorithm to work
+  # Also, the data set has to be sorted by datetime in decreasing order.
+  if (nrow(df) > lags) {
+    lagged <- df
+    for (i in 1:lags) {
+      attached <- df[(1 + i):nrow(df), colnames]
+      names(attached) <- paste0(names(attached), "-", i)
+      lagged <- cbind(lagged[1:(nrow(df) - i), ], attached, row.names = NULL)
+    }
+    return(lagged)
+  } else {
+    df[0:0, ]
+  }
+}
+```
+
+```{r Lag package dataset}
+pkg.merged.df <- subset(pkg.merged.df, select = -c(minCommit.out, maxCommit.out, meanCommit.out, minCommit.in, maxCommit.in, meanCommit.in))
+# The following comment was put in by the authors.
+# The meaning is unclear but it may be useful later:
+# minRatio.out, maxRatio.out, meanRatio.out, minRatio.in, maxRatio.in, meanRatio.in
+
+pkg.lagged <- ddply(pkg.merged.df, .(package), function(pkg) {
+  sorted <- pkg[order(pkg[["commit_date"]], decreasing = TRUE), ]
+  lag.df(sorted, 12, colnames = setdiff(names(sorted), c("package", "commit_date")))
+}, .progress = "text")
+head(pkg.lagged)
+```
+
+```{r Define cv/ml functions}
+# Define "enums"
+shapes <- c("star", "circle", "tiny", "clique", "chain")
+targets <- c(shapes, "CD", "UD", "HL", "IXPD")
+
+# Remove columns ["commit_date", "package"]
+pkg.dataset <- subset(pkg.lagged, select = -c(commit_date, package))
+
+# Define and apply "binarisation"-function tfcutter
+# This function will map all values >= 1 to 1 and 0 to 0.
+tfcutter <- colwise(cut, breaks = c(0, 1, .Machine$integer.max), labels = c(0, 1), right = FALSE, ordered_result = TRUE)
+pkg.dataset <- cbind(tfcutter(pkg.dataset[targets]), pkg.dataset[setdiff(names(pkg.dataset), targets)])
+
+# Remove columns with near-zero variance
+pkg.dataset.nzv <- pkg.dataset[, -nearZeroVar(pkg.dataset)]
+
+# Save cv settings in fitControl variable:
+# 10-fold CV with 10 repetitions
+fitControl <- trainControl( ## 10-fold CV
+  method = "repeatedcv",
+  number = 10,
+  repeats = 10,
+  savePredictions = TRUE,
+  verboseIter = TRUE,
+  sampling = "down"
+)
+
+# Define a function to encapsulate the training procedure
+runCV <- function(lagged, .models, .shapes, .outfilePrefix = "") {
+  # Generate all combinations of targets and models to test
+  experiments <- expand.grid(shape = .shapes, model = .models)
+  adply(experiments, .margins = 1, function(experiment) {
+    currentShape <- paste(experiment[1, "shape"])
+    currentModel <- paste(experiment[1, "model"])
+
+    if (currentShape %in% names(lagged)) {
+      # Keep only lagged columns in the data set, plus the class itself
+      lagged.train <- cbind(
+        lagged[c(currentShape)],
+        lagged[grep("-", names(lagged))]
+      )
+      print(paste("Model:", currentModel))
+      print(names(lagged.train))
+      fit <- train(as.formula(paste(currentShape, "~ .")),
+        data = lagged.train,
+        method = currentModel,
+        trControl = fitControl
+      )
+      cm <- confusionMatrix(confusionMatrix(fit, norm = "none")$table,
+        positive = "1",
+        mode = "prec_recall"
+      )
+      cm.df <- data.frame(as.list(cm$overall), as.list(cm$byClass))
+      write.csv(cm.df, paste0(.outfilePrefix, "cm-", currentShape, "-", currentModel, ".csv"))
+      # Save to .rds (RStudio file) as well
+      saveRDS(fit, paste0(.outfilePrefix, "model-", currentShape, "-", currentModel, ".rds"))
+      cm.df
+    } else {
+      data.frame()
+    }
+  })
+}
+
+##################################################
+# SMOTE: Improvements to counter class imbalance #
+##################################################
+
+# Save cv settings in fitControl variable:
+# 10-fold CV with 10 repetitions
+fitControl.smote <- trainControl(
+  method = "repeatedcv",
+  number = 10,
+  repeats = 10,
+  savePredictions = TRUE,
+  verboseIter = TRUE,
+  sampling = "smote"
+)
+
+# Define a function to encapsulate the training procedure
+runCV.smote <- function(lagged, .models, .shapes, .outfilePrefix = "") {
+  # Generate all combinations of targets and models to test
+  experiments <- expand.grid(shape = .shapes, model = .models)
+  adply(experiments, .margins = 1, function(experiment) {
+    currentShape <- paste(experiment[1, "shape"])
+    currentModel <- paste(experiment[1, "model"])
+
+    if (currentShape %in% names(lagged)) {
+      # Keep only lagged columns in the data set, plus the class
+      lagged.train <- cbind(
+        lagged[c(currentShape)],
+        lagged[grep("-", names(lagged))]
+      )
+      print(paste("Model:", currentModel))
+      print(names(lagged.train))
+      fit <- train(as.formula(paste(currentShape, "~ .")),
+        data = lagged.train,
+        method = currentModel,
+        trControl = fitControl.smote
+      )
+
+      cm <- confusionMatrix(confusionMatrix(fit, norm = "none")$table,
+        positive = "1",
+        mode = "prec_recall"
+      )
+      cm.df <- data.frame(as.list(cm$overall), as.list(cm$byClass))
+      write.csv(cm.df, paste0(.outfilePrefix, "cm-", currentShape, "-", currentModel, ".csv"))
+      # Save to .rds (RStudio file) as well
+      saveRDS(fit, paste0(.outfilePrefix, "model-", currentShape, "-", currentModel, ".rds"))
+      cm.df
+    } else {
+      data.frame()
+    }
+  })
+}
+```
+
+```{r Train nb and all targets}
+models <- c("nb")
+set.seed(825)
+confusionMatricesNB <- runCV(pkg.dataset.nzv, models, targets, "jgit-month-")
+write.csv(confusionMatricesNB, "jgit-month-cm-ALL-nb.csv")
+```
+
+```{r Train C5.0 and all targets}
+models <- c("C5.0")
+set.seed(825)
+confusionMatricesC50 <- runCV(pkg.dataset.nzv, models, targets, "jgit-month-")
+write.csv(confusionMatricesC50, "jgit-month-cm-ALL-c50.csv")
+```
+
+```{r Train rf and all targets}
+models <- c("rf")
+set.seed(825)
+confusionMatricesRF <- runCV(pkg.dataset.nzv, models, targets, "jgit-month-")
+write.csv(confusionMatricesRF, "jgit-month-cm-ALL-rf.csv")
+```
+
+```{r Write all confusion matrices}
+write.csv(rbind(confusionMatricesNB, confusionMatricesC50, confusionMatricesRF), "jgit-month-cm-ALL-ALL.csv")
+```
+
+```{r Train nb and all targets smote}
+models <- c("nb")
+set.seed(825)
+confusionMatricesNB <- runCV.smote(pkg.dataset.nzv, models, targets, "smote.jgit-month-")
+write.csv(confusionMatricesNB, "smote.jgit-month-cm-ALL-nb.csv")
+```
+
+```{r Train C5.0 and all targets smote}
+models <- c("C5.0")
+set.seed(825)
+confusionMatricesC50 <- runCV.smote(pkg.dataset.nzv, models, targets, "smote.jgit-month-")
+write.csv(confusionMatricesC50, "smote.jgit-month-cm-ALL-c50.csv")
+```
+
+
+```{r Train rf and all targets smote}
+models <- c("rf") # "C5.0" "logreg" has some issues, should be tested outside
+set.seed(825)
+confusionMatricesRF <- runCV.smote(pkg.dataset.nzv, models, targets, "smote.jgit-month-")
+write.csv(confusionMatricesRF, "smote.jgit-month-cm-ALL-rf.csv")
+```
+
+```{r Write all confusion matrices smote}
+write.csv(rbind(confusionMatricesNB, confusionMatricesC50, confusionMatricesRF), "smote.jgit-month-cm-ALL-ALL.csv")
+```
+
+```{r Define svm functions}
+# Define "enums"
+shapes <- c("star", "circle", "tiny", "clique", "chain")
+targets <- c(shapes, "CD", "UD", "HL", "IXPD")
+
+# Remove columns ["commit_date", "package"]
+pkg.dataset.svm <- subset(pkg.lagged, select = -c(commit_date, package))
+n <- names(pkg.dataset.svm)
+
+# Remove columns with near-zero variance
+range01 <- function(x) {
+  (x - min(x)) / (max(x) - min(x))
+}
+pkg.dataset.svm.t <- apply(pkg.dataset.svm[setdiff(names(pkg.dataset.svm), targets)], 2, range01)
+pkg.dataset.svm <- cbind(ifelse(pkg.dataset.svm[targets] < 1, 0, 1), pkg.dataset.svm.t)
+rm(pkg.dataset.svm.t)
+pkg.dataset.svm <- as.data.frame(pkg.dataset.svm)
+pkg.dataset.svm <- pkg.dataset.svm[, -nearZeroVar(pkg.dataset.svm)]
+pkg.dataset.nzv <- pkg.dataset.svm
+
+# Save cv settings in fitControl variable:
+# 10-fold CV with 10 repetitions
+fitControl.svm <- trainControl(
+  method = "repeatedcv",
+  number = 10,
+  repeats = 10,
+  savePredictions = TRUE,
+  verboseIter = TRUE,
+)
+
+
+# Define a function to encapsulate the training procedure
+runCV.svm <- function(lagged, .grid, .models, .targets, .outfilePrefix = "") {
+  # Generate all combinations of targets and models to test
+  experiments <- expand.grid(shape = .targets, model = .models)
+  adply(experiments, .margins = 1, function(experiment) {
+    currentShape <- paste(experiment[1, "shape"])
+    currentModel <- paste(experiment[1, "model"])
+
+    if (currentShape %in% names(lagged)) {
+      # Keep only lagged columns in the data set, plus the class
+      lagged.train <- cbind(
+        lagged[c(currentShape)],
+        lagged[grep("-", names(lagged))]
+      )
+      trainIndex <- createDataPartition(lagged.train[, currentShape], p = .5, list = FALSE)
+      trainData <- lagged.train[trainIndex, ]
+      testData <- lagged.train[-trainIndex, ]
+      lagged.train <- trainData
+      print(paste("Model:", currentModel))
+      print(names(lagged.train))
+      fit <- train(
+        y = factor(model.matrix(~ . - 1, lagged.train[currentShape])),
+        x = model.matrix(~ . - 1, lagged.train),
+        method = currentModel,
+        tuneGrid = .grid,
+        # tuneLength =9, # 9 values of the cost function
+        preProc = c("center", "scale"), # Center and scale data
+        trControl = fitControl.svm
+      )
+
+      test_pred <- predict(fit, newData = model.matrix(~ . - 1, testData))
+      print("predictiton test", test_pred)
+      # cm <- confusionMatrix(test_pred,testData[,currentShape])
+      cm <- confusionMatrix(fit$pred$pred, fit$pred$obs, positive = "1", mode = "prec_recall")
+      cm.df <- data.frame(as.list(cm$overall), as.list(cm$byClass))
+      write.csv(cm.df, paste0(.outfilePrefix, "cm-", currentShape, "-", currentModel, ".csv"))
+      # Save to .rds (RStudio file) as well
+      saveRDS(fit, paste0(.outfilePrefix, "model-", currentShape, "-", currentModel, ".rds"))
+      cm.df
+    } else {
+      data.frame()
+    }
+  })
+}
+```
+
+```{r Train svm radial}
+models <- c("svmRadial")
+set.seed(825)
+grid <- expand.grid(sigma = c(.5, .6, .7, .8, .9, 1, 1.2, 1.4), C = c(1.25, 1.5, 1.75, 2, 2.25))
+grid <- expand.grid(sigma = c(.05, .07, .1, .15, .17, .2, .25, .3, .35, .4), C = c(.5, 1.0, 1.25, 1.5))
+confusionMatricesSVMRadial <- runCV.svm(pkg.dataset.nzv, grid, models, targets, "jgit-month-")
+write.csv(confusionMatricesSVMRadial, "jgit-month-cm-ALL-svm-radial.csv")
+```
+
+```{r Train svm linear}
+models <- c("svmLinear")
+set.seed(825)
+grid <- expand.grid(C = c(0.01, 0.05, 0.1, 0.5, 0.75, 0.9, 1, 1.1, 1.25))
+confusionMatricesSVMlinear <- runCV.svm(pkg.dataset.nzv, grid, models, targets, "jgit-month-")
+write.csv(confusionMatricesSVMlinear, "jgit-month-cm-ALL-svm-linear.csv")
+```
+
+
+```{r Read all confusion matrices}
+files <- list.files(path = "data/ml-results/jgit/month", pattern = ".csv")
+readFromCsv <- function(filename, header = TRUE, sep = ",") {
+  ret <- read.csv(paste0("data/ml-results/jgit/month/", filename), header, sep)
+  appo <- str_split_fixed(filename, "\\-", 4)
+  ret$System <- appo[, 1]
+  ret$Var <- appo[, 3]
+  ret$Model <- gsub(".csv", "", appo[, 4])
+  ret$File <- filename
+  ret
+}
+temp <- ldply(as.list(files), readFromCsv)
+write.csv(file = "all-md-ml.csv", temp)
+```
+
+
+```{r Finally write summary to file}
+pkg.merged.df.sum <- ddply(pkg.merged.df,
+  .(commit_date), summarize,
+  cd = sum(CD), icpd = sum(IXPD), hl = sum(HL), ud = sum(UD), # star = sum(star), tiny = sum(tiny), chain = sum(chain), clique = sum(clique), circle = sum(circle),
+  tot = sum(CD, IXPD, UD, HL), # , tiny, circle, chain, clique, star),
+  .progress = "text"
+)
+write.csv(file = "jgit-as-evolution.csv", pkg.merged.df.sum)
+```

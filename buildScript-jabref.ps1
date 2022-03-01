@@ -48,6 +48,7 @@ $endIndex = 100
 
 $projectPath = "C:\Users\noahb\Desktop\jabref"
 $buildOutputPath = "C:\Users\noahb\Desktop\jabref\build\classes\java"
+$generatedSourcesPath = "C:\Users\noahb\Desktop\jabref\src\main\generated"
 $arcanJarPath = "C:\Users\noahb\Desktop\dvad14-smelly-replication\Arcan-1.3.5\Arcan-1.3.5-SNAPSHOT\Arcan-1.3.5-SNAPSHOT.jar"
 $metricsPath = "C:\Users\noahb\Desktop\dvad14-smelly-replication\data"
 
@@ -71,7 +72,7 @@ Set-Location $projectPath
 # Sequential mode (default)
 git checkout $startCommit
 # Manual mode
-# #git checkout $manualCommits[0]
+# git checkout $manualCommits[0]
 
 $succededBuilds = @()
 $failedBuilds = @()
@@ -107,6 +108,13 @@ for ($i = $startIndex; $i -lt $endIndex; $i++) {
         Write-Host "Applying Bugfix 1" -ForegroundColor Yellow
         (Get-Content -Path "build.gradle" -Raw) -replace "de.undercouch:citeproc-java:3.0.0-SNAPSHOT", "de.undercouch:citeproc-java:3.0.0-alpha.1" |
         Set-Content -Path "build.gradle"
+    }
+
+    # Bugfix 2
+    if($commitTime -le "2021-03-10T21:32:18") {
+        Write-Host "Applying Bugfix 2" -ForegroundColor Yellow
+        (Get-Content -Path ".\src\main\java\org\jabref\logic\citationstyle\CSLAdapter.java" -Raw).replace("new DefaultAbbreviationProvider(), null, newStyle, `"en-US`");", "new DefaultAbbreviationProvider(), newStyle, `"en-US`");") |
+        Set-Content -Path ".\src\main\java\org\jabref\logic\citationstyle\CSLAdapter.java"
     }
 
     # Compile project
@@ -164,6 +172,7 @@ for ($i = $startIndex; $i -lt $endIndex; $i++) {
         $failedBuilds += New-BuildObject -commitId $commitId -dateTime $commitTime
     }
     Remove-Item -Recurse -Force $buildOutputPath
+	Remove-Item -Recurse -Force $generatedSourcesPath
     git reset --hard
 }
 

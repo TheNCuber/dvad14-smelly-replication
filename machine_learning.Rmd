@@ -160,6 +160,7 @@ runCV <- function(lagged, .models, .shapes, .outfilePrefix = "") {
 
     if (currentShape %in% names(lagged)) {
       # Keep only lagged columns in the data set, plus the class itself
+      browser()
       lagged.train <- cbind(
         lagged[c(currentShape)],
         lagged[grep("-", names(lagged))]
@@ -240,10 +241,10 @@ runCV.smote <- function(lagged, .models, .shapes, .outfilePrefix = "") {
 ```
 
 ```{r Train nb and all targets}
-models <- c("nb")
-set.seed(825)
-confusionMatricesNB <- runCV(pkg.dataset.nzv, models, targets, "jgit-month-")
-write.csv(confusionMatricesNB, "jgit-month-cm-ALL-nb.csv")
+#models <- c("nb")
+#set.seed(825)
+#confusionMatricesNB <- runCV(pkg.dataset.nzv, models, targets, "jgit-month-")
+#write.csv(confusionMatricesNB, "jgit-month-cm-ALL-nb.csv")
 ```
 
 ```{r Train C5.0 and all targets}
@@ -261,14 +262,15 @@ write.csv(confusionMatricesRF, "jgit-month-cm-ALL-rf.csv")
 ```
 
 ```{r Write all confusion matrices}
-write.csv(rbind(confusionMatricesNB, confusionMatricesC50, confusionMatricesRF), "jgit-month-cm-ALL-ALL.csv")
+write.csv(rbind(confusionMatricesC50, confusionMatricesRF), "jgit-month-cm-ALL-ALL.csv")
+#write.csv(rbind(confusionMatricesNB, confusionMatricesC50, confusionMatricesRF), "jgit-month-cm-ALL-ALL.csv")
 ```
 
 ```{r Train nb and all targets smote}
-models <- c("nb")
-set.seed(825)
-confusionMatricesNB <- runCV.smote(pkg.dataset.nzv, models, targets, "smote.jgit-month-")
-write.csv(confusionMatricesNB, "smote.jgit-month-cm-ALL-nb.csv")
+#models <- c("nb")
+#set.seed(825)
+#confusionMatricesNB <- runCV.smote(pkg.dataset.nzv, models, targets, "smote.jgit-month-")
+#write.csv(confusionMatricesNB, "smote.jgit-month-cm-ALL-nb.csv")
 ```
 
 ```{r Train C5.0 and all targets smote}
@@ -287,7 +289,8 @@ write.csv(confusionMatricesRF, "smote.jgit-month-cm-ALL-rf.csv")
 ```
 
 ```{r Write all confusion matrices smote}
-write.csv(rbind(confusionMatricesNB, confusionMatricesC50, confusionMatricesRF), "smote.jgit-month-cm-ALL-ALL.csv")
+write.csv(rbind(confusionMatricesC50, confusionMatricesRF), "smote.jgit-month-cm-ALL-ALL.csv")
+# write.csv(rbind(confusionMatricesNB, confusionMatricesC50, confusionMatricesRF), "smote.jgit-month-cm-ALL-ALL.csv")
 ```
 
 ```{r Define svm functions}

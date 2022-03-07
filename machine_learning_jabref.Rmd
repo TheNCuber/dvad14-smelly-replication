@@ -1,6 +1,6 @@
 ---
 title: "Machine Learning Algorithm"
-author: "Noah Bühlmann"
+author: "DVAD14 group B"
 date: "18 February 2022"
 output: html_document
 ---
@@ -42,7 +42,7 @@ to.timestamp.fromint <-
 
 # Read csv
 pkg.merged.df <-
-  read.csv("cache/jgit/package_merged.csv",
+  read.csv("cache/jabref/package_merged.csv",
     head = TRUE,
     sep = ","
   )
@@ -56,10 +56,10 @@ pkg.merged.df <-
   subset(
     pkg.merged.df,
     select = -c(
-      minRatio.out, minRatio.in, UDminInstabilityCorrelatedPackage, HLminFanIn,
-      HLminFanOut, HLminTD, maxRatio.out, maxRatio.in,
+      UDminInstabilityCorrelatedPackage, HLminFanIn,
+      HLminFanOut, HLminTD,
       UDmaxInstabilityCorrelatedPackage, HLmaxFanIn, HLmaxFanOut, HLmaxTD,
-      meanRatio.out, meanRatio.in, UDmeanInstabilityCorrelatedPackage,
+      UDmeanInstabilityCorrelatedPackage,
       UDsdInstabilityCorrelatedPackage, HLmeanFanIn, HLsdFanIn, HLmeanFanOut,
       HLsdFanOut, HLmeanTD, HLsdTD, InstabilityUnstableDependenciesPackage, RMA,
       RMI, CE, CA, RMD
@@ -73,7 +73,6 @@ head(pkg.merged.df)
 # Add new column commit_date with values YYYY-mm based on commit_time
 pkg.merged.df$commit_date <- factor(strftime(pkg.merged.df$commit_time, "%Y-%m"))
 
-head(pkg.merged.df)
 
 # Remove columns ["version", "commit_time"]
 # Group by columns ["package", "commit_date"]
@@ -83,10 +82,10 @@ pkg.merged.df <- ddply(pkg.merged.df[setdiff(names(pkg.merged.df), c("version", 
   function(slice) {
     slice.cols <- setdiff(names(slice), c("package", "commit_date"))
     cbind(
-      colwise(min)(slice[, slice.cols[grep("min", slice.cols)]]),
-      colwise(max)(slice[, slice.cols[grep("max", slice.cols)]]),
-      colwise(mean)(slice[, slice.cols[grep("(mean|sd)", slice.cols)]]),
-      colwise(sum)(slice[, slice.cols[grep("(min|max|mean|sd)", slice.cols, invert = TRUE)]])
+      # colwise(min)(slice[, slice.cols[grep("min", slice.cols)]]),
+       #colwise(max)(slice[, slice.cols[grep("max", slice.cols)]]),
+       #colwise(mean)(slice[, slice.cols[grep("(mean|sd)", slice.cols)]]),
+       colwise(sum)(slice[, slice.cols[grep("(min|max|mean|sd)", slice.cols, invert = TRUE)]])
     )
   },
   .progress = "text"
@@ -113,7 +112,8 @@ lag.df <- function(df, lags, colnames = names(df)) {
 ```
 
 ```{r Lag package dataset}
-pkg.merged.df <- subset(pkg.merged.df, select = -c(minCommit.out, maxCommit.out, meanCommit.out, minCommit.in, maxCommit.in, meanCommit.in))
+#pkg.merged.df <- subset(pkg.merged.df, select = -c(minCommit.out, maxCommit.out, meanCommit.out, minCommit.in, #maxCommit.in, meanCommit.in))
+
 # The following comment was put in by the authors.
 # The meaning is unclear but it may be useful later:
 # minRatio.out, maxRatio.out, meanRatio.out, minRatio.in, maxRatio.in, meanRatio.in
@@ -128,7 +128,7 @@ head(pkg.lagged)
 ```{r Define cv/ml functions}
 # Define "enums"
 shapes <- c("star", "circle", "tiny", "clique", "chain")
-targets <- c(shapes, "CD", "UD", "HL", "IXPD")
+targets <- c(shapes, "CD", "UD", "HL")
 
 # Remove columns ["commit_date", "package"]
 pkg.dataset <- subset(pkg.lagged, select = -c(commit_date, package))
@@ -298,7 +298,7 @@ write.csv(rbind(confusionMatricesC50, confusionMatricesRF), "smote.jgit-month-cm
 ```{r Define svm functions}
 # Define "enums"
 shapes <- c("star", "circle", "tiny", "clique", "chain")
-targets <- c(shapes, "CD", "UD", "HL", "IXPD")
+targets <- c(shapes, "CD", "UD", "HL")
 
 # Remove columns ["commit_date", "package"]
 pkg.dataset.svm <- subset(pkg.lagged, select = -c(commit_date, package))
@@ -409,8 +409,8 @@ write.csv(file = "all-md-ml.csv", temp)
 ```{r Finally write summary to file}
 pkg.merged.df.sum <- ddply(pkg.merged.df,
   .(commit_date), summarize,
-  cd = sum(CD), icpd = sum(IXPD), hl = sum(HL), ud = sum(UD), # star = sum(star), tiny = sum(tiny), chain = sum(chain), clique = sum(clique), circle = sum(circle),
-  tot = sum(CD, IXPD, UD, HL), # , tiny, circle, chain, clique, star),
+  cd = sum(CD), hl = sum(HL), ud = sum(UD), # star = sum(star), tiny = sum(tiny), chain = sum(chain), clique = sum(clique), circle = sum(circle),
+  tot = sum(CD, UD, HL), # , tiny, circle, chain, clique, star),
   .progress = "text"
 )
 write.csv(file = "jgit-as-evolution.csv", pkg.merged.df.sum)

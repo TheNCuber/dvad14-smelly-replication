@@ -159,6 +159,8 @@ runCV <- function(lagged, .models, .shapes, .outfilePrefix = "") {
   adply(experiments, .margins = 1, function(experiment) {
     currentShape <- paste(experiment[1, "shape"])
     currentModel <- paste(experiment[1, "model"])
+    
+    print(names(lagged))
 
     if (currentShape %in% names(lagged)) {
       # Keep only lagged columns in the data set, plus the class itself

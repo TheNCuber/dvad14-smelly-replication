@@ -283,7 +283,8 @@ pkg.merged.df &lt;- ddply(pkg.merged.df[setdiff(names(pkg.merged.df), c(&quot;ve
   function(slice) {
     slice.cols &lt;- setdiff(names(slice), c(&quot;package&quot;, &quot;commit_date&quot;))
     cbind(
-      # colwise(min)(slice[, slice.cols[grep(&quot;min&quot;, slice.cols)]]),
+       # without IXPD we don&#39;t have any columns with mix, max and mean and this would lead to an error
+       #colwise(min)(slice[, slice.cols[grep(&quot;min&quot;, slice.cols)]]),
        #colwise(max)(slice[, slice.cols[grep(&quot;max&quot;, slice.cols)]]),
        #colwise(mean)(slice[, slice.cols[grep(&quot;(mean|sd)&quot;, slice.cols)]]),
        colwise(sum)(slice[, slice.cols[grep(&quot;(min|max|mean|sd)&quot;, slice.cols, invert = TRUE)]])
@@ -1092,8 +1093,10 @@ pkg.dataset &lt;- subset(pkg.lagged, select = -c(commit_date, package))
 tfcutter &lt;- colwise(cut, breaks = c(0, 1, .Machine$integer.max), labels = c(0, 1), right = FALSE, ordered_result = TRUE)
 pkg.dataset &lt;- cbind(tfcutter(pkg.dataset[targets]), pkg.dataset[setdiff(names(pkg.dataset), targets)])
 
+
 # Remove columns with near-zero variance
-pkg.dataset.nzv &lt;- pkg.dataset[, -nearZeroVar(pkg.dataset)]
+# Manually add &#39;HL&#39; column (nzv for our data), as it is a metric
+pkg.dataset.nzv &lt;- pkg.dataset[, -setdiff(nearZeroVar(pkg.dataset), grep(&#39;^HL$&#39;, colnames(pkg.dataset)))]
 
 # Save cv settings in fitControl variable:
 # 10-fold CV with 10 repetitions
@@ -1136,7 +1139,7 @@ runCV &lt;- function(lagged, .models, .shapes, .outfilePrefix = &quot;&quot;) {
       write.csv(cm.df, paste0(.outfilePrefix, &quot;cm-&quot;, currentShape, &quot;-&quot;, currentModel, &quot;.csv&quot;))
       # Save to .rds (RStudio file) as well
       saveRDS(fit, paste0(.outfilePrefix, &quot;model-&quot;, currentShape, &quot;-&quot;, currentModel, &quot;.rds&quot;))
-      cm.df
+      # cm.df
     } else {
       data.frame()
     }
@@ -1200,7 +1203,7 @@ runCV.smote &lt;- function(lagged, .models, .shapes, .outfilePrefix = &quot;&quo
 #write.csv(confusionMatricesNB, &quot;jgit-month-cm-ALL-nb.csv&quot;)</code></pre>
 <pre class="r"><code>models &lt;- c(&quot;C5.0&quot;)
 set.seed(825)
-confusionMatricesC50 &lt;- runCV(pkg.dataset.nzv, models, targets, &quot;jgit-month-&quot;)</code></pre>
+confusionMatricesC50 &lt;- runCV(pkg.dataset.nzv, models, targets, &quot;jabref-month-&quot;)</code></pre>
 <pre><code>## [1] &quot;Model: C5.0&quot;
 ##  [1] &quot;tiny&quot;                      &quot;tiny-1&quot;                   
 ##  [3] &quot;CD-1&quot;                      &quot;tiny-2&quot;                   
@@ -1252,10 +1255,10 @@ confusionMatricesC50 &lt;- runCV(pkg.dataset.nzv, models, targets, &quot;jgit-mo
 ## Aggregating results
 ## Selecting tuning parameters
 ## Fitting trials = 10, model = tree, winnow = TRUE on full training set</code></pre>
-<pre class="r"><code>write.csv(confusionMatricesC50, &quot;jgit-month-cm-ALL-c50.csv&quot;)</code></pre>
+<pre class="r"><code>write.csv(confusionMatricesC50, &quot;jabref-month-cm-ALL-c50.csv&quot;)</code></pre>
 <pre class="r"><code>models &lt;- c(&quot;rf&quot;)
 set.seed(825)
-confusionMatricesRF &lt;- runCV(pkg.dataset.nzv, models, targets, &quot;jgit-month-&quot;)</code></pre>
+confusionMatricesRF &lt;- runCV(pkg.dataset.nzv, models, targets, &quot;jabref-month-&quot;)</code></pre>
 <pre><code>## [1] &quot;Model: rf&quot;
 ##  [1] &quot;tiny&quot;                      &quot;tiny-1&quot;                   
 ##  [3] &quot;CD-1&quot;                      &quot;tiny-2&quot;                   
@@ -1307,8 +1310,8 @@ confusionMatricesRF &lt;- runCV(pkg.dataset.nzv, models, targets, &quot;jgit-mon
 ## Aggregating results
 ## Selecting tuning parameters
 ## Fitting mtry = 2 on full training set</code></pre>
-<pre class="r"><code>write.csv(confusionMatricesRF, &quot;jgit-month-cm-ALL-rf.csv&quot;)</code></pre>
-<pre class="r"><code>write.csv(rbind(confusionMatricesC50, confusionMatricesRF), &quot;jgit-month-cm-ALL-ALL.csv&quot;)
+<pre class="r"><code>write.csv(confusionMatricesRF, &quot;jabref-month-cm-ALL-rf.csv&quot;)</code></pre>
+<pre class="r"><code>write.csv(rbind(confusionMatricesC50, confusionMatricesRF), &quot;jabref-month-cm-ALL-ALL.csv&quot;)
 #write.csv(rbind(confusionMatricesNB, confusionMatricesC50, confusionMatricesRF), &quot;jgit-month-cm-ALL-ALL.csv&quot;)</code></pre>
 <pre class="r"><code>#models &lt;- c(&quot;nb&quot;)
 #set.seed(825)
@@ -1316,7 +1319,7 @@ confusionMatricesRF &lt;- runCV(pkg.dataset.nzv, models, targets, &quot;jgit-mon
 #write.csv(confusionMatricesNB, &quot;smote.jgit-month-cm-ALL-nb.csv&quot;)</code></pre>
 <pre class="r"><code>models &lt;- c(&quot;C5.0&quot;)
 set.seed(825)
-confusionMatricesC50 &lt;- runCV.smote(pkg.dataset.nzv, models, targets, &quot;smote.jgit-month-&quot;)</code></pre>
+confusionMatricesC50 &lt;- runCV.smote(pkg.dataset.nzv, models, targets, &quot;smote.jabref-month-&quot;)</code></pre>
 <pre><code>## [1] &quot;Model: C5.0&quot;
 ##  [1] &quot;tiny&quot;                      &quot;tiny-1&quot;                   
 ##  [3] &quot;CD-1&quot;                      &quot;tiny-2&quot;                   
@@ -1333,48 +1336,8 @@ confusionMatricesC50 &lt;- runCV.smote(pkg.dataset.nzv, models, targets, &quot;s
 ## [25] &quot;UD-10&quot;                    
 ## Aggregating results
 ## Selecting tuning parameters
-## Fitting trials = 20, model = rules, winnow = FALSE on full training set</code></pre>
-<pre><code>## Warning: package &#39;themis&#39; was built under R version 4.0.5</code></pre>
-<pre><code>## Loading required package: recipes</code></pre>
-<pre><code>## Warning: package &#39;recipes&#39; was built under R version 4.0.5</code></pre>
-<pre><code>## Loading required package: dplyr</code></pre>
-<pre><code>## Warning: package &#39;dplyr&#39; was built under R version 4.0.5</code></pre>
-<pre><code>## 
-## Attaching package: &#39;dplyr&#39;</code></pre>
-<pre><code>## The following objects are masked from &#39;package:plyr&#39;:
-## 
-##     arrange, count, desc, failwith, id, mutate, rename, summarise,
-##     summarize</code></pre>
-<pre><code>## The following objects are masked from &#39;package:stats&#39;:
-## 
-##     filter, lag</code></pre>
-<pre><code>## The following objects are masked from &#39;package:base&#39;:
-## 
-##     intersect, setdiff, setequal, union</code></pre>
-<pre><code>## 
-## Attaching package: &#39;recipes&#39;</code></pre>
-<pre><code>## The following object is masked from &#39;package:stringr&#39;:
-## 
-##     fixed</code></pre>
-<pre><code>## The following object is masked from &#39;package:stats&#39;:
-## 
-##     step</code></pre>
-<pre><code>## Registered S3 methods overwritten by &#39;themis&#39;:
-##   method                  from   
-##   bake.step_downsample    recipes
-##   bake.step_upsample      recipes
-##   prep.step_downsample    recipes
-##   prep.step_upsample      recipes
-##   tidy.step_downsample    recipes
-##   tidy.step_upsample      recipes
-##   tunable.step_downsample recipes
-##   tunable.step_upsample   recipes</code></pre>
-<pre><code>## 
-## Attaching package: &#39;themis&#39;</code></pre>
-<pre><code>## The following objects are masked from &#39;package:recipes&#39;:
-## 
-##     step_downsample, step_upsample</code></pre>
-<pre><code>## [1] &quot;Model: C5.0&quot;
+## Fitting trials = 20, model = rules, winnow = FALSE on full training set
+## [1] &quot;Model: C5.0&quot;
 ##  [1] &quot;CD&quot;                        &quot;tiny-1&quot;                   
 ##  [3] &quot;CD-1&quot;                      &quot;tiny-2&quot;                   
 ##  [5] &quot;CD-2&quot;                      &quot;tiny-3&quot;                   
@@ -1408,10 +1371,10 @@ confusionMatricesC50 &lt;- runCV.smote(pkg.dataset.nzv, models, targets, &quot;s
 ## Aggregating results
 ## Selecting tuning parameters
 ## Fitting trials = 1, model = rules, winnow = FALSE on full training set</code></pre>
-<pre class="r"><code>write.csv(confusionMatricesC50, &quot;smote.jgit-month-cm-ALL-c50.csv&quot;)</code></pre>
+<pre class="r"><code>write.csv(confusionMatricesC50, &quot;smote.jabref-month-cm-ALL-c50.csv&quot;)</code></pre>
 <pre class="r"><code>models &lt;- c(&quot;rf&quot;) # &quot;C5.0&quot; &quot;logreg&quot; has some issues, should be tested outside
 set.seed(825)
-confusionMatricesRF &lt;- runCV.smote(pkg.dataset.nzv, models, targets, &quot;smote.jgit-month-&quot;)</code></pre>
+confusionMatricesRF &lt;- runCV.smote(pkg.dataset.nzv, models, targets, &quot;smote.jabref-month-&quot;)</code></pre>
 <pre><code>## [1] &quot;Model: rf&quot;
 ##  [1] &quot;tiny&quot;                      &quot;tiny-1&quot;                   
 ##  [3] &quot;CD-1&quot;                      &quot;tiny-2&quot;                   
@@ -1463,8 +1426,8 @@ confusionMatricesRF &lt;- runCV.smote(pkg.dataset.nzv, models, targets, &quot;sm
 ## Aggregating results
 ## Selecting tuning parameters
 ## Fitting mtry = 2 on full training set</code></pre>
-<pre class="r"><code>write.csv(confusionMatricesRF, &quot;smote.jgit-month-cm-ALL-rf.csv&quot;)</code></pre>
-<pre class="r"><code>write.csv(rbind(confusionMatricesC50, confusionMatricesRF), &quot;smote.jgit-month-cm-ALL-ALL.csv&quot;)
+<pre class="r"><code>write.csv(confusionMatricesRF, &quot;smote.jabref-month-cm-ALL-rf.csv&quot;)</code></pre>
+<pre class="r"><code>write.csv(rbind(confusionMatricesC50, confusionMatricesRF), &quot;smote.jabref-month-cm-ALL-ALL.csv&quot;)
 # write.csv(rbind(confusionMatricesNB, confusionMatricesC50, confusionMatricesRF), &quot;smote.jgit-month-cm-ALL-ALL.csv&quot;)</code></pre>
 <pre class="r"><code># Define &quot;enums&quot;
 shapes &lt;- c(&quot;star&quot;, &quot;circle&quot;, &quot;tiny&quot;, &quot;clique&quot;, &quot;chain&quot;)
@@ -1544,7 +1507,7 @@ runCV.svm &lt;- function(lagged, .grid, .models, .targets, .outfilePrefix = &quo
 set.seed(825)
 grid &lt;- expand.grid(sigma = c(.5, .6, .7, .8, .9, 1, 1.2, 1.4), C = c(1.25, 1.5, 1.75, 2, 2.25))
 grid &lt;- expand.grid(sigma = c(.05, .07, .1, .15, .17, .2, .25, .3, .35, .4), C = c(.5, 1.0, 1.25, 1.5))
-confusionMatricesSVMRadial &lt;- runCV.svm(pkg.dataset.nzv, grid, models, targets, &quot;jgit-month-&quot;)</code></pre>
+confusionMatricesSVMRadial &lt;- runCV.svm(pkg.dataset.nzv, grid, models, targets, &quot;jabref-month-&quot;)</code></pre>
 <pre><code>## [1] &quot;Model: svmRadial&quot;
 ##  [1] &quot;tiny&quot;                      &quot;tiny-1&quot;                   
 ##  [3] &quot;CD-1&quot;                      &quot;tiny-2&quot;                   
@@ -1599,11 +1562,11 @@ confusionMatricesSVMRadial &lt;- runCV.svm(pkg.dataset.nzv, grid, models, target
 ## Selecting tuning parameters
 ## Fitting sigma = 0.4, C = 0.5 on full training set
 ## [1] &quot;predictiton test&quot;</code></pre>
-<pre class="r"><code>write.csv(confusionMatricesSVMRadial, &quot;jgit-month-cm-ALL-svm-radial.csv&quot;)</code></pre>
+<pre class="r"><code>write.csv(confusionMatricesSVMRadial, &quot;jabref-month-cm-ALL-svm-radial.csv&quot;)</code></pre>
 <pre class="r"><code>models &lt;- c(&quot;svmLinear&quot;)
 set.seed(825)
 grid &lt;- expand.grid(C = c(0.01, 0.05, 0.1, 0.5, 0.75, 0.9, 1, 1.1, 1.25))
-confusionMatricesSVMlinear &lt;- runCV.svm(pkg.dataset.nzv, grid, models, targets, &quot;jgit-month-&quot;)</code></pre>
+confusionMatricesSVMlinear &lt;- runCV.svm(pkg.dataset.nzv, grid, models, targets, &quot;jabref-month-&quot;)</code></pre>
 <pre><code>## [1] &quot;Model: svmLinear&quot;
 ##  [1] &quot;tiny&quot;                      &quot;tiny-1&quot;                   
 ##  [3] &quot;CD-1&quot;                      &quot;tiny-2&quot;                   
@@ -1658,10 +1621,10 @@ confusionMatricesSVMlinear &lt;- runCV.svm(pkg.dataset.nzv, grid, models, target
 ## Selecting tuning parameters
 ## Fitting C = 0.01 on full training set
 ## [1] &quot;predictiton test&quot;</code></pre>
-<pre class="r"><code>write.csv(confusionMatricesSVMlinear, &quot;jgit-month-cm-ALL-svm-linear.csv&quot;)</code></pre>
-<pre class="r"><code>files &lt;- list.files(path = &quot;data/ml-results/jgit/month&quot;, pattern = &quot;.csv&quot;)
+<pre class="r"><code>write.csv(confusionMatricesSVMlinear, &quot;jabref-month-cm-ALL-svm-linear.csv&quot;)</code></pre>
+<pre class="r"><code>files &lt;- list.files(path = &quot;data/ml-results/jabref/month&quot;, pattern = &quot;.csv&quot;)
 readFromCsv &lt;- function(filename, header = TRUE, sep = &quot;,&quot;) {
-  ret &lt;- read.csv(paste0(&quot;data/ml-results/jgit/month/&quot;, filename), header, sep)
+  ret &lt;- read.csv(paste0(&quot;data/ml-results/jabref/month/&quot;, filename), header, sep)
   appo &lt;- str_split_fixed(filename, &quot;\\-&quot;, 4)
   ret$System &lt;- appo[, 1]
   ret$Var &lt;- appo[, 3]
@@ -1718,7 +1681,7 @@ write.csv(file = &quot;all-md-ml.csv&quot;, temp)</code></pre>
   |==================================================================    |  95%
   |                                                                            
   |======================================================================| 100%</code></pre>
-<pre class="r"><code>write.csv(file = &quot;jgit-as-evolution.csv&quot;, pkg.merged.df.sum)</code></pre>
+<pre class="r"><code>write.csv(file = &quot;jabref-as-evolution.csv&quot;, pkg.merged.df.sum)</code></pre>
 
 
 

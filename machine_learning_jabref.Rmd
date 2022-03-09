@@ -82,7 +82,8 @@ pkg.merged.df <- ddply(pkg.merged.df[setdiff(names(pkg.merged.df), c("version", 
   function(slice) {
     slice.cols <- setdiff(names(slice), c("package", "commit_date"))
     cbind(
-      # colwise(min)(slice[, slice.cols[grep("min", slice.cols)]]),
+       # without IXPD we don't have any columns with mix, max and mean and this would lead to an error
+       #colwise(min)(slice[, slice.cols[grep("min", slice.cols)]]),
        #colwise(max)(slice[, slice.cols[grep("max", slice.cols)]]),
        #colwise(mean)(slice[, slice.cols[grep("(mean|sd)", slice.cols)]]),
        colwise(sum)(slice[, slice.cols[grep("(min|max|mean|sd)", slice.cols, invert = TRUE)]])
@@ -138,8 +139,10 @@ pkg.dataset <- subset(pkg.lagged, select = -c(commit_date, package))
 tfcutter <- colwise(cut, breaks = c(0, 1, .Machine$integer.max), labels = c(0, 1), right = FALSE, ordered_result = TRUE)
 pkg.dataset <- cbind(tfcutter(pkg.dataset[targets]), pkg.dataset[setdiff(names(pkg.dataset), targets)])
 
+
 # Remove columns with near-zero variance
-pkg.dataset.nzv <- pkg.dataset[, -nearZeroVar(pkg.dataset)]
+# Manually add 'HL' column (nzv for our data), as it is a metric
+pkg.dataset.nzv <- pkg.dataset[, -setdiff(nearZeroVar(pkg.dataset), grep('^HL$', colnames(pkg.dataset)))]
 
 # Save cv settings in fitControl variable:
 # 10-fold CV with 10 repetitions
@@ -159,6 +162,7 @@ runCV <- function(lagged, .models, .shapes, .outfilePrefix = "") {
   adply(experiments, .margins = 1, function(experiment) {
     currentShape <- paste(experiment[1, "shape"])
     currentModel <- paste(experiment[1, "model"])
+
 
     if (currentShape %in% names(lagged)) {
       # Keep only lagged columns in the data set, plus the class itself
@@ -182,7 +186,7 @@ runCV <- function(lagged, .models, .shapes, .outfilePrefix = "") {
       write.csv(cm.df, paste0(.outfilePrefix, "cm-", currentShape, "-", currentModel, ".csv"))
       # Save to .rds (RStudio file) as well
       saveRDS(fit, paste0(.outfilePrefix, "model-", currentShape, "-", currentModel, ".rds"))
-      cm.df
+      # cm.df
     } else {
       data.frame()
     }

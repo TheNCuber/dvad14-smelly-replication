@@ -252,19 +252,19 @@ runCV.smote <- function(lagged, .models, .shapes, .outfilePrefix = "") {
 ```{r Train C5.0 and all targets}
 models <- c("C5.0")
 set.seed(825)
-confusionMatricesC50 <- runCV(pkg.dataset.nzv, models, targets, "jgit-month-")
-write.csv(confusionMatricesC50, "jgit-month-cm-ALL-c50.csv")
+confusionMatricesC50 <- runCV(pkg.dataset.nzv, models, targets, "jabref-month-")
+write.csv(confusionMatricesC50, "jabref-month-cm-ALL-c50.csv")
 ```
 
 ```{r Train rf and all targets}
 models <- c("rf")
 set.seed(825)
-confusionMatricesRF <- runCV(pkg.dataset.nzv, models, targets, "jgit-month-")
-write.csv(confusionMatricesRF, "jgit-month-cm-ALL-rf.csv")
+confusionMatricesRF <- runCV(pkg.dataset.nzv, models, targets, "jabref-month-")
+write.csv(confusionMatricesRF, "jabref-month-cm-ALL-rf.csv")
 ```
 
 ```{r Write all confusion matrices}
-write.csv(rbind(confusionMatricesC50, confusionMatricesRF), "jgit-month-cm-ALL-ALL.csv")
+write.csv(rbind(confusionMatricesC50, confusionMatricesRF), "jabref-month-cm-ALL-ALL.csv")
 #write.csv(rbind(confusionMatricesNB, confusionMatricesC50, confusionMatricesRF), "jgit-month-cm-ALL-ALL.csv")
 ```
 
@@ -278,20 +278,20 @@ write.csv(rbind(confusionMatricesC50, confusionMatricesRF), "jgit-month-cm-ALL-A
 ```{r Train C5.0 and all targets smote}
 models <- c("C5.0")
 set.seed(825)
-confusionMatricesC50 <- runCV.smote(pkg.dataset.nzv, models, targets, "smote.jgit-month-")
-write.csv(confusionMatricesC50, "smote.jgit-month-cm-ALL-c50.csv")
+confusionMatricesC50 <- runCV.smote(pkg.dataset.nzv, models, targets, "smote.jabref-month-")
+write.csv(confusionMatricesC50, "smote.jabref-month-cm-ALL-c50.csv")
 ```
 
 
 ```{r Train rf and all targets smote}
 models <- c("rf") # "C5.0" "logreg" has some issues, should be tested outside
 set.seed(825)
-confusionMatricesRF <- runCV.smote(pkg.dataset.nzv, models, targets, "smote.jgit-month-")
-write.csv(confusionMatricesRF, "smote.jgit-month-cm-ALL-rf.csv")
+confusionMatricesRF <- runCV.smote(pkg.dataset.nzv, models, targets, "smote.jabref-month-")
+write.csv(confusionMatricesRF, "smote.jabref-month-cm-ALL-rf.csv")
 ```
 
 ```{r Write all confusion matrices smote}
-write.csv(rbind(confusionMatricesC50, confusionMatricesRF), "smote.jgit-month-cm-ALL-ALL.csv")
+write.csv(rbind(confusionMatricesC50, confusionMatricesRF), "smote.jabref-month-cm-ALL-ALL.csv")
 # write.csv(rbind(confusionMatricesNB, confusionMatricesC50, confusionMatricesRF), "smote.jgit-month-cm-ALL-ALL.csv")
 ```
 
@@ -377,23 +377,23 @@ models <- c("svmRadial")
 set.seed(825)
 grid <- expand.grid(sigma = c(.5, .6, .7, .8, .9, 1, 1.2, 1.4), C = c(1.25, 1.5, 1.75, 2, 2.25))
 grid <- expand.grid(sigma = c(.05, .07, .1, .15, .17, .2, .25, .3, .35, .4), C = c(.5, 1.0, 1.25, 1.5))
-confusionMatricesSVMRadial <- runCV.svm(pkg.dataset.nzv, grid, models, targets, "jgit-month-")
-write.csv(confusionMatricesSVMRadial, "jgit-month-cm-ALL-svm-radial.csv")
+confusionMatricesSVMRadial <- runCV.svm(pkg.dataset.nzv, grid, models, targets, "jabref-month-")
+write.csv(confusionMatricesSVMRadial, "jabref-month-cm-ALL-svm-radial.csv")
 ```
 
 ```{r Train svm linear}
 models <- c("svmLinear")
 set.seed(825)
 grid <- expand.grid(C = c(0.01, 0.05, 0.1, 0.5, 0.75, 0.9, 1, 1.1, 1.25))
-confusionMatricesSVMlinear <- runCV.svm(pkg.dataset.nzv, grid, models, targets, "jgit-month-")
-write.csv(confusionMatricesSVMlinear, "jgit-month-cm-ALL-svm-linear.csv")
+confusionMatricesSVMlinear <- runCV.svm(pkg.dataset.nzv, grid, models, targets, "jabref-month-")
+write.csv(confusionMatricesSVMlinear, "jabref-month-cm-ALL-svm-linear.csv")
 ```
 
 
 ```{r Read all confusion matrices}
-files <- list.files(path = "data/ml-results/jgit/month", pattern = ".csv")
+files <- list.files(path = "data/ml-results/jabref/month", pattern = ".csv")
 readFromCsv <- function(filename, header = TRUE, sep = ",") {
-  ret <- read.csv(paste0("data/ml-results/jgit/month/", filename), header, sep)
+  ret <- read.csv(paste0("data/ml-results/jabref/month/", filename), header, sep)
   appo <- str_split_fixed(filename, "\\-", 4)
   ret$System <- appo[, 1]
   ret$Var <- appo[, 3]
@@ -413,5 +413,5 @@ pkg.merged.df.sum <- ddply(pkg.merged.df,
   tot = sum(CD, UD, HL), # , tiny, circle, chain, clique, star),
   .progress = "text"
 )
-write.csv(file = "jgit-as-evolution.csv", pkg.merged.df.sum)
+write.csv(file = "jabref-as-evolution.csv", pkg.merged.df.sum)
 ```

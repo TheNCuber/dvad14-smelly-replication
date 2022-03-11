@@ -1,5 +1,5 @@
 # A Study on Architectural Smells Prediction - Replication Project
-This project is a replication of the research described in the 2019 paper ["A Study on Architectural Smells Prediction"](https://www.doi.org/10.1109/SEAA.2019.00057) by Fontana et al.
+This project is a replication of the research described in the 2019 paper ["A Study on Architectural Smells Prediction"](https://www.doi.org/10.1109/SEAA.2019.00057) by Arcelli Fontana et al.
 
 The work is carried out by Noah Bühlmann, Roland Widmer and Hugo Baptista and supervised by Sebastian Herold at the University of Karlstad in Karlstad, Sweden.
 
@@ -10,7 +10,7 @@ The work is carried out by Noah Bühlmann, Roland Widmer and Hugo Baptista and s
 
 ## Initial remarks by Sebastian
 - replication package provided by authors is not bug free
-- one architectural smell mentioned in the paper - Implicit Cross Package Dependency (ICPD) - is not supported by the ARCTAN tool for architectural smells detection
+- one architectural smell mentioned in the paper - Implicit Cross Package Dependency (ICPD) - is not supported by the ARCAN tool for architectural smells detection
 - if the machine learning models crash, the number of commits should be constrained (e.g. to the last ten per month)
 - during the preprocessing phase features without variance are removed, it should therefor be checked that the dataset is not empty after preprocessing
 

@@ -48,7 +48,7 @@ $endIndex = 100
 
 $projectPath = "C:\Users\noahb\Desktop\jabref"
 $buildOutputPath = "C:\Users\noahb\Desktop\jabref\build\classes\java"
-$generatedSourcesPath = "C:\Users\noahb\Desktop\jabref\src\main\generated"
+$disposableArtifactsPaths = @("C:\Users\noahb\Desktop\jabref\src\main\generated","C:\Users\noahb\Desktop\jabref\src\main\gen","C:\Users\noahb\Desktop\jabref\build")
 $arcanJarPath = "C:\Users\noahb\Desktop\dvad14-smelly-replication\Arcan-1.3.5\Arcan-1.3.5-SNAPSHOT\Arcan-1.3.5-SNAPSHOT.jar"
 $metricsPath = "C:\Users\noahb\Desktop\dvad14-smelly-replication\data"
 
@@ -106,7 +106,7 @@ for ($i = $startIndex; $i -lt $endIndex; $i++) {
     # Bugfix 1
     if($commitTime -le "2021-06-15T13:43:41") {
         Write-Host "Applying Bugfix 1" -ForegroundColor Yellow
-        (Get-Content -Path "build.gradle" -Raw) -replace "de.undercouch:citeproc-java:3.0.0-SNAPSHOT", "de.undercouch:citeproc-java:3.0.0-alpha.1" |
+        (Get-Content -Path "build.gradle" -Raw).replace("de.undercouch:citeproc-java:3.0.0-SNAPSHOT", "de.undercouch:citeproc-java:3.0.0-alpha.1") |
         Set-Content -Path "build.gradle"
     }
 
@@ -115,6 +115,15 @@ for ($i = $startIndex; $i -lt $endIndex; $i++) {
         Write-Host "Applying Bugfix 2" -ForegroundColor Yellow
         (Get-Content -Path ".\src\main\java\org\jabref\logic\citationstyle\CSLAdapter.java" -Raw).replace("new DefaultAbbreviationProvider(), null, newStyle, `"en-US`");", "new DefaultAbbreviationProvider(), newStyle, `"en-US`");") |
         Set-Content -Path ".\src\main\java\org\jabref\logic\citationstyle\CSLAdapter.java"
+    }
+	
+	# Bugfix 3
+    if(($commitTime -le "2020-07-17T17:23:34") -and ($commitTime -ge "2020-05-15T09:27:24")) {
+        Write-Host "Applying Bugfix 3" -ForegroundColor Yellow
+        git cherry-pick 87e824237585e3a33a58c356607cc8a56ffeac54
+        $appliedBugfix3 = $True
+    } else {
+        $appliedBugfix3 = $False
     }
 
     # Compile project
@@ -171,8 +180,20 @@ for ($i = $startIndex; $i -lt $endIndex; $i++) {
         Write-Host "Build of $commitId failed"
         $failedBuilds += New-BuildObject -commitId $commitId -dateTime $commitTime
     }
+
+    # Remove build output
     Remove-Item -Recurse -Force $buildOutputPath
-	Remove-Item -Recurse -Force $generatedSourcesPath
+
+    # Remove disposable artifacts
+    $disposableArtifactsPaths | ForEach-Object {
+        if(Test-Path -Path $_) {
+            Remove-Item -Recurse -Force $_
+        }
+    }
+
+    if($appliedBugfix3) {
+        git reset --hard HEAD^
+    }
     git reset --hard
 }
 

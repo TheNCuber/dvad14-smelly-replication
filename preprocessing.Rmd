@@ -1,0 +1,470 @@
+---
+title: "AS evolution with arcan jgit"
+author: "Noah Bühlmann"
+date: "28th February 2022"
+output: html_document
+---
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document.
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+# AS-evolution
+Note: split fullname classes <http://stackoverflow.com/questions/24938616/string-split-on-last-comma-in-r/>
+
+## Read *class metric* file from csv and print summary
+```{r Reading csv of class metrics}
+knitr::opts_chunk$set(cache = FALSE)
+library(stringr)
+library(data.table)
+library(plyr)
+library(tidyr)
+
+# Define helper functions to convert timestamps
+to.timestamp <- function(d) as.POSIXct(d, origin = "1970-01-01", tz = "GMT", format = "%Y-%m-%dT%H:%M:%S")
+to.timestamp.fromint <- function(d) as.POSIXct(d, origin = "1970-01-01", tz = "GMT")
+
+classmetrics <- fread("data/jgit/CM.csv")
+appo <- str_split_fixed(classmetrics$Class, "\\.\\s*(?=[^\\.]+$)", 2)
+classmetrics$package <- appo[, 1]
+classmetrics$className <- appo[, 2]
+rm(appo)
+classmetrics$commit_time <- to.timestamp(classmetrics$commit_time)
+
+# Group by package
+groupclassmetrics <- classmetrics[
+  ,
+  .(
+    meanCBO = mean(CBO), sdCBO = sd(CBO), maxCBO = max(CBO), minCBO = min(CBO),
+    meanLCOM = mean(LCOM), sdLCOM = sd(LCOM), maxLCOM = max(LCOM), minLCOM = min(LCOM),
+    meanFI = mean(FI), sdFI = sd(FI), maxFI = max(FI), minFI = min(FI),
+    meanFO = mean(FO), sdFO = sd(FO), maxFO = max(FO), minFO = min(FO),
+    numClasses = length(unique(Class))
+  ),
+  .(package, version, commit_time)
+]
+
+head(groupclassmetrics)
+```
+
+## Read *package file* from csv and print summary
+```{r Reading csv of package metrics}
+pkgmetrics <- fread("data/jgit/PM.csv")
+pkgmetrics$commit_time <- to.timestamp(pkgmetrics$commit_time)
+
+names(pkgmetrics)
+summary(pkgmetrics)
+head(pkgmetrics)
+```
+
+## Read *hub like* from csv and print summary
+```{r Reading csv file of hub like AS}
+hublike <- fread("data/jgit/HL.csv")
+hublike$commit_time <- to.timestamp(hublike$commit_time)
+appo <- str_split_fixed(hublike$Class, "\\.\\s*(?=[^\\.]+$)", 2)
+hublike$package <- appo[, 1]
+hublike$className <- appo[, 2]
+rm(appo)
+
+hublike$HL <- 1
+
+# Group by  package
+grouphublike <- hublike[
+  , .(
+    meanFanIn = mean(FanIn),
+    sdFanIn = sd(FanIn),
+    maxFanIn = max(FanIn),
+    minFanIn = min(FanIn),
+    meanFanOut = mean(FanOut),
+    sdFanOut = sd(FanOut),
+    maxFanOut = max(FanOut),
+    minFanOut = min(FanOut),
+    meanTD = mean(Total.Dependences),
+    sdTD = sd(Total.Dependences),
+    maxTD = max(Total.Dependences),
+    minTD = min(Total.Dependences),
+    numClasses = length(unique(Class)),
+    HL = sum(HL)
+  ),
+  .(package, version, commit_time)
+]
+
+head(grouphublike)
+```
+
+## Read *unstable dependency* from csv and print summary
+```{r Reading csv file of unstable dependecies AS}
+unstabledep <- fread(file="data/jgit/UD.csv")
+unstabledep$commit_time <- to.timestamp(unstabledep$commit_time)
+if(empty(unstabledep)){
+  unstabledep$UD <- numeric(0)
+} else {
+  unstabledep$UD <- 1
+}
+
+head(unstabledep)
+```
+
+## Read *class cycle* from csv and print summary,
+
+Put cycle item (after circle, star and chain) *\"* and at the end of every lines. search *$* and write *\"* in replace all field, then press replace all, Last add a new column classes
+```{r Reading file csv of cycle among classes}
+# Define "enum"
+shapes <- c("circle", "tiny", "star", "chain", "clique")
+
+clcycle <- fread("data/jgit/classCL.csv")
+clcycle <- separate_rows(clcycle, ElementList, sep = ",")
+clcycle$CycleType <- factor(clcycle$CycleType, shapes)
+clcycle$commit_time <- to.timestamp(clcycle$commit_time)
+setDT(clcycle)
+
+appocy <- str_split_fixed(clcycle$ElementList, "\\.\\s*(?=[^\\.]+$)", 2)
+clcycle$package <- appocy[, 1]
+clcycle$className <- appocy[, 2]
+rm(appocy)
+
+clcycle$CD <- 1
+
+head(clcycle)
+```
+
+## Read *package cycle* from csv and print summary
+
+Put cycle item (after circle, star and chain) *\"* and at the end of every lines. search *$* and write *\"* in replace all field, then press replace all, Last add a new column package
+```{r Reading file csv of cycle among package}
+pkgcycle <- fread("data/jgit/packageCL.csv")
+pkgcycle$commit_time <- to.timestamp(pkgcycle$commit_time)
+pkgcycle <- separate_rows(pkgcycle, ElementList, sep = ",")
+pkgcycle$CycleType <- factor(pkgcycle$CycleType, shapes)
+pkgcycle$CD <- 1
+setDT(pkgcycle)
+
+head(pkgcycle)
+```
+
+## Read *ixpd* from csv and print summary
+```{r Reading IXPD csv}
+ixpd <- fread(file = "data/jgit/IXPD.csv")
+ixpd <- ixpd[, java.out := gsub("^.*\\.(src|tst)\\.", "", java.out), ]
+ixpd <- ixpd[, java.in := gsub("^.*\\.(src|tst)\\.", "", java.in), ]
+
+appoixpdin <- str_split_fixed(ixpd$java.in, "\\.\\s*(?=[^\\.]+$)", 2)
+appoixpdout <- str_split_fixed(ixpd$java.out, "\\.\\s*(?=[^\\.]+$)", 2)
+ixpd$commit_time <- to.timestamp.fromint(ixpd$commit_time)
+ixpd$package.in <- appoixpdin[, 1]
+ixpd$className.in <- appoixpdin[, 2]
+ixpd$package.out <- appoixpdout[, 1]
+ixpd$className.out <- appoixpdout[, 2]
+rm(appoixpdin)
+rm(appoixpdout)
+
+ixpd$IXPD <- 1
+ixpd <- rename(ixpd, replace = c("package.out" = "package"))
+ixpd <- rename(ixpd, replace = c("className.out" = "className"))
+
+names(ixpd)
+summary(ixpd)
+head(ixpd)
+```
+
+```{r Group to package ixpd}
+pkg.ixpd <- ixpd[
+  , .(
+    minCommit.out = min(commit.out), maxCommit.out = max(commit.out), meanCommit.out = mean(commit.out),
+    minCommit.in = min(commit.in), maxCommit.in = max(commit.in), meanCommit.in = mean(commit.in),
+    minRatio.out = min(ratio.out), maxRatio.out = max(ratio.out), meanRatio.out = mean(ratio.out),
+    minRatio.in = min(ration.in), maxRatio.in = max(ration.in), meanRatio.in = mean(ration.in),
+    numClasses = length(java.in),
+    IXPD = length(java.in),
+    numPackages = length(unique(package.in))
+  ),
+  .(version, commit_time, package)
+]
+
+names(pkg.ixpd)
+```
+
+```{r Developers info}
+class.dev <- fread("data/jgit/development.csv")
+class.dev$commit_time <- to.timestamp.fromint(class.dev$commit_time)
+class.dev <- class.dev[, javafile := gsub("^.*\\.(src|tst)\\.", "", javafile), ]
+appodev <- str_split_fixed(class.dev$javafile, "\\.\\s*(?=[^\\.]+$)", 2)
+class.dev$package <- appodev[, 1]
+class.dev$className <- appodev[, 2]
+
+pkg.dev <- class.dev[, .(numjavafile = length(unique(javafile)), nummail = length(unique(mail)), max.file.changed = max(file.changed), sum.added.total = sum(added.total), sum.removed.total = sum(removed.total), sum.added.file = sum(added.file), sum.removed.file = sum(removed.file)), .(version, commit_time, package, author, mail)]
+
+head(pkg.dev)
+
+```
+
+# Merging
+```
+Inner join: merge(df1, df2) will work for these examples because R automatically joins the frames by common variable names, but you would most likely want to specify merge(df1, df2, by = "CustomerId") to make sure that you were matching on only the fields you desired. You can also use the by.x and by.y parameters if the matching variables have different names in the different data frames.
+
+Outer join: merge(x = df1, y = df2, by = "CustomerId", all = TRUE)
+Left outer: merge(x = df1, y = df2, by = "CustomerId", all.x = TRUE)
+Right outer: merge(x = df1, y = df2, by = "CustomerId", all.y = TRUE)
+Cross join: merge(x = df1, y = df2, by = NULL)
+```
+# Class merging dataset and ML with caret
+
+## Merging by metrics and cycle at class level (left outer join)
+```{r Merging class cycle and metrics at class level}
+clcycle[
+  ,
+  `:=`(
+    star = ifelse(as.character(CycleType) == "star", 1, 0),
+    tiny = ifelse(as.character(CycleType) == "tiny", 1, 0),
+    chain = ifelse(as.character(CycleType) == "chain", 1, 0),
+    clique = ifelse(as.character(CycleType) == "clique", 1, 0),
+    circle = ifelse(as.character(CycleType) == "circle", 1, 0)
+  )
+]
+
+clcycletype <- clcycle[
+  ,
+  .(
+    star = sum(star),
+    tiny = sum(tiny),
+    chain = sum(chain),
+    clique = sum(clique),
+    circle = sum(circle),
+    CD = sum(CD)
+  ),
+  .(version, commit_time, package, className)
+]
+setkey(clcycletype, "version", "commit_time", "package", "className")
+setkey(classmetrics, "version", "commit_time", "package", "className")
+class.cycle.metric.merging <- clcycletype[classmetrics, roll = TRUE]
+class.cycle.metric.merging <- subset(class.cycle.metric.merging, select = -c(Class))
+class.cycle.metric.merging[is.na(class.cycle.metric.merging)] <- 0
+
+# Clean memory from no-more used data sets
+rm(clcycle)
+rm(clcycletype)
+rm(classmetrics)
+```
+
+## Merging by metrics-cycle with IXPD at class level (left outer join)
+```{r Merging class cycle-metrics with IXPD at class level}
+keycols = c("version", "package", "className")
+setkeyv(ixpd, keycols)
+setkeyv(class.cycle.metric.merging, keycols)
+ixpd <- subset(ixpd, select = -c(commit_time))
+class.cycle.metric.ixpd.merging <- ixpd[class.cycle.metric.merging]
+
+class.cycle.metric.ixpd.merging[is.na(class.cycle.metric.ixpd.merging)] <- 0
+names(class.cycle.metric.ixpd.merging)
+summary(class.cycle.metric.ixpd.merging)
+head(class.cycle.metric.ixpd.merging)
+
+# Clean memory from no-more used data sets
+rm(ixpd)
+rm(class.cycle.metric.merging)
+``` 
+
+## Merging by metrics-cycle-IXPD with Hub-Like at class level (left outer join)
+```{r Merging class cycle-metrics-IXPD with Hub-Like at class level}
+hublike.tmp <- hublike
+names(hublike.tmp) <- gsub("^(FanIn|FanOut|Total.Dependences)", "HL\\1", names(hublike))
+setkey(hublike.tmp, "version", "commit_time", "package", "className")
+setkey(class.cycle.metric.ixpd.merging, "version", "commit_time", "package", "className")
+class.cycle.metric.ixpd.HL.merging <- hublike.tmp[class.cycle.metric.ixpd.merging]
+rm(hublike.tmp)
+
+class.cycle.metric.ixpd.HL.merging[is.na(class.cycle.metric.ixpd.HL.merging)] <- 0
+names(class.cycle.metric.ixpd.HL.merging)
+summary(class.cycle.metric.ixpd.HL.merging)
+head(class.cycle.metric.ixpd.HL.merging)
+
+# Clean memory from no-more used data sets
+rm(hublike)
+rm(class.cycle.metric.merging)
+``` 
+
+## Merging by metrics-cycle-IXPD-Hub-like with Unstable dependencies at class level (left outer join)
+```{r Merging class cycle-metrics-IXPD-Hub-like with Unstable dependencies at class level}
+class.unstabledep <- if (empty(unstabledep)) {
+  data.table(
+    version = NA,
+    commit_time = NA,
+    UnstableDependenciesPackage = NA,
+    InstabilityUnstableDependenciesPackage = NA,
+    UDnumCorrelatedPackage = NA,
+    UDminInstabilityCorrelatedPackage = NA,
+    UDmaxInstabilityCorrelatedPackage = NA,
+    UDmeanInstabilityCorrelatedPackage = NA,
+    UDsdInstabilityCorrelatedPackage = NA,
+    UD = NA
+  )[0:0, ]
+} else {
+  unstabledep[
+    ,
+    .(
+      UDnumCorrelatedPackage = length(CorrelatedPackage),
+      UDminInstabilityCorrelatedPackage = min(InstabilityCorrelatedPackage),
+      UDmaxInstabilityCorrelatedPackage = max(InstabilityCorrelatedPackage),
+      UDmeanInstabilityCorrelatedPackage = mean(InstabilityCorrelatedPackage),
+      UDsdInstabilityCorrelatedPackage = sd(InstabilityCorrelatedPackage),
+      UD = sum(UD)
+    ),
+    .(version, commit_time, UnstableDependenciesPackage, InstabilityUnstableDependenciesPackage)
+  ]
+}
+names(class.unstabledep)[3] <- "package"
+setkey(class.unstabledep, "version", "commit_time", "package")
+setkey(class.cycle.metric.ixpd.HL.merging, "version", "commit_time", "package")
+class.cycle.metric.ixpd.HL.UD.merging <- class.unstabledep[class.cycle.metric.ixpd.HL.merging]
+class.cycle.metric.ixpd.HL.UD.merging[is.na(class.cycle.metric.ixpd.HL.UD.merging)] <- 0
+names(class.cycle.metric.ixpd.HL.UD.merging)
+
+# Clean memory from no-more used data sets
+rm(class.unstabledep)
+rm(class.cycle.metric.ixpd.HL.merging)
+``` 
+
+# Package merging dataset and ML with caret
+
+## Merging by metrics and cycle at package level (left outer join)
+```{r Merging class cycle and metrics at package level}
+names(pkgcycle)[5] <- "package"
+names(pkgmetrics)[3] <- "package"
+pkgcycle[
+  ,
+  `:=`(
+    star = ifelse(as.character(CycleType) == "star", 1, 0),
+    tiny = ifelse(as.character(CycleType) == "tiny", 1, 0),
+    chain = ifelse(as.character(CycleType) == "chain", 1, 0),
+    clique = ifelse(as.character(CycleType) == "clique", 1, 0),
+    circle = ifelse(as.character(CycleType) == "circle", 1, 0)
+  ),
+]
+pkgcycletype <- pkgcycle[
+  ,
+  .(
+    star = sum(star),
+    tiny = sum(tiny),
+    chain = sum(chain),
+    clique = sum(clique),
+    circle = sum(circle),
+    CD = sum(CD)
+  ),
+  .(version, commit_time, package)
+]
+setkey(pkgcycletype, "version", "commit_time", "package")
+setkey(pkgmetrics, "version", "commit_time", "package")
+pkg.cycle.metric.merging <- pkgcycletype[pkgmetrics, roll = TRUE]
+pkg.cycle.metric.merging[is.na(pkg.cycle.metric.merging)] <- 0
+names(pkg.cycle.metric.merging)
+
+# Clean memory from no-more used data sets
+rm(pkgcycletype)
+rm(pkgmetrics)
+```
+
+```{r Merge package hub-like info}
+grouphublike.tmp <- grouphublike
+names(grouphublike.tmp) <- gsub("^(min|max|sd|mean|num)", "HL\\1", names(grouphublike.tmp))
+setkey(pkg.cycle.metric.merging, "version", "commit_time", "package")
+setkey(grouphublike.tmp, "version", "commit_time", "package")
+pkg.metric.CD.HL <- grouphublike.tmp[pkg.cycle.metric.merging]
+rm(grouphublike.tmp)
+
+pkg.metric.CD.HL[is.na(pkg.metric.CD.HL)] <- 0
+names(pkg.metric.CD.HL)
+
+# Clean memory from no-more used data sets
+rm(grouphublike)
+rm(pkg.cycle.metric.merging)
+```
+
+```{r Merge package unstable deps info}
+pkg.unstabledep <- if (empty(unstabledep)) {
+  data.table(
+    version = NA,
+    commit_time = NA,
+    UnstableDependenciesPackage = NA,
+    InstabilityUnstableDependenciesPackage = NA,
+    UDnumCorrelatedPackage = NA,
+    UDminInstabilityCorrelatedPackage = NA,
+    UDmaxInstabilityCorrelatedPackage = NA,
+    UDmeanInstabilityCorrelatedPackage = NA,
+    UDsdInstabilityCorrelatedPackage = NA
+  )[0:0, ]
+} else {
+  unstabledep[
+    ,
+    .(
+      UDnumCorrelatedPackage = length(CorrelatedPackage),
+      UDminInstabilityCorrelatedPackage = min(InstabilityCorrelatedPackage),
+      UDmaxInstabilityCorrelatedPackage = max(InstabilityCorrelatedPackage),
+      UDmeanInstabilityCorrelatedPackage = mean(InstabilityCorrelatedPackage),
+      UDsdInstabilityCorrelatedPackage = sd(InstabilityCorrelatedPackage)
+    ),
+    .(version, commit_time, UnstableDependenciesPackage, InstabilityUnstableDependenciesPackage)
+  ]
+}
+
+names(pkg.unstabledep)[3] <- "package"
+
+setkey(pkg.unstabledep, "version", "commit_time", "package")
+setkey(pkg.metric.CD.HL, "version", "commit_time", "package")
+
+pkg.metric.CD.HL.UD <- pkg.unstabledep[pkg.metric.CD.HL]
+pkg.metric.CD.HL.UD[is.na(pkg.metric.CD.HL.UD)] <- 0
+
+# Clean memory from no-more used data sets
+rm(pkg.unstabledep)
+rm(pkg.metric.CD.HL)
+```
+
+```{r Package merge ixpd}
+keycols <- c("version", "package")
+setkeyv(pkg.ixpd, keycols)
+setkeyv(pkg.metric.CD.HL.UD, keycols)
+pkg.ixpd <- subset(pkg.ixpd, select = -c(commit_time))
+pkg.metric.CD.HL.UD.ixpd <- pkg.ixpd[pkg.metric.CD.HL.UD]
+pkg.metric.CD.HL.UD.ixpd[is.na(pkg.metric.CD.HL.UD.ixpd)] <- 0
+
+# Clean memory from no-more used data sets
+rm(pkg.ixpd)
+rm(pkg.metric.CD.HL.UD)
+```
+
+```{r Write merged datasets to file}
+fwrite(pkg.metric.CD.HL.UD.ixpd, "cache/jgit/package_merged.csv", append = FALSE)
+fwrite(class.cycle.metric.ixpd.HL.UD.merging, "cache/jgit/class_merged.csv", append = FALSE)
+```
+
+```{r Package merge dev}
+keycols <- c("version", "package")
+setkeyv(pkg.dev, keycols)
+setkeyv(pkg.metric.CD.HL.UD.ixpd, keycols)
+pkg.dev <- subset(pkg.dev, select = -c(commit_time))
+pkg.metric.CD.HL.UD.ixpd.dev <- pkg.dev[pkg.metric.CD.HL.UD.ixpd]
+pkg.metric.CD.HL.UD.ixpd.dev[is.na(pkg.metric.CD.HL.UD.ixpd.dev)] <- 0
+
+# Clean memory from no-more used data sets
+rm(pkg.dev)
+rm(pkg.metric.CD.HL.UD.ixpd)
+```
+
+```{r Class merge dev}
+setkey(class.dev, "version", "package", "className")
+setkey(class.cycle.metric.ixpd.HL.UD.merging, "version", "package", "className")
+class.dev <- subset(class.dev, select = -c(commit_time))
+class.cycle.metric.ixpd.HL.UD.dev <- class.dev[class.cycle.metric.ixpd.HL.UD.merging]
+class.cycle.metric.ixpd.HL.UD.dev[is.na(class.cycle.metric.ixpd.HL.UD.dev)] <- 0
+
+# Clean memory from no-more used data sets
+rm(class.dev)
+rm(class.cycle.metric.ixpd.HL.UD.merging)
+```
+
+```{r Write merged datasets to file dev}
+fwrite(pkg.metric.CD.HL.UD.ixpd.dev, "cache/jgit/package_merged.dev.csv", append = FALSE)
+fwrite(class.cycle.metric.ixpd.HL.UD.dev, "cache/jgit/class_merged.dev.csv", append = FALSE)
+```

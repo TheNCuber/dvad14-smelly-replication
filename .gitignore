@@ -37,3 +37,9 @@ vignettes/*.pdf
 
 # R Environment Variables
 .Renviron
+
+
+# Data, Models
+/data
+*.csv
+*.rds

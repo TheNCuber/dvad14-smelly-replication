@@ -1,5 +1,7 @@
 # A Study on Architectural Smells Prediction - Replication Project
-This project is a replication of the research described in the 2019 paper ["A Study on Architectural Smells Prediction"](https://www.doi.org/10.1109/SEAA.2019.00057) by Arcelli Fontana et al.<img src="docs/kau.png" width="100" style="float: right;">
+This project is a replication of the research described in the 2019 paper ["A Study on Architectural Smells Prediction"](https://www.doi.org/10.1109/SEAA.2019.00057) by Arcelli Fontana et al.
+
+<img src="docs/kau.png" width="100" style="float: right;">
 
 The work was carried out by Noah Bühlmann, Roland Widmer and Hugo Baptista and supervised by Sebastian Herold at the University of Karlstad in Karlstad, Sweden.
 

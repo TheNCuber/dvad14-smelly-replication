@@ -28,32 +28,20 @@ function New-BuildObject {
 
 ### Begin of Settings ###
 
-# Set compatibilities between Java and Gradle and specify paths to all the installed JDKs
-$compatibilityMatrix = @()
-$compatibilityMatrix += New-CompatibilityObject -javaVersion "17.0" -gradleVersion "7.3" -path "C:\Program Files\Java\jdk-17.0.2"
-$compatibilityMatrix += New-CompatibilityObject -javaVersion "16.0" -gradleVersion "7.0" -path "C:\Users\noahb\.jdks\jdk-16"
-$compatibilityMatrix += New-CompatibilityObject -javaVersion "15.0" -gradleVersion "6.7" -path "C:\Users\noahb\.jdks\jdk-15"
-$compatibilityMatrix += New-CompatibilityObject -javaVersion "14.0" -gradleVersion "6.3" -path "C:\Users\noahb\.jdks\jdk-14"
-$compatibilityMatrix += New-CompatibilityObject -javaVersion "13.0" -gradleVersion "6.0" -path "C:\Users\noahb\.jdks\jdk-13"
-$compatibilityMatrix += New-CompatibilityObject -javaVersion "12.0" -gradleVersion "5.4" -path "C:\Users\noahb\.jdks\jdk-12"
-$compatibilityMatrix += New-CompatibilityObject -javaVersion "11.0" -gradleVersion "5.0" -path "C:\Users\noahb\.jdks\jdk-11"
-$compatibilityMatrix += New-CompatibilityObject -javaVersion "10.0" -gradleVersion "4.7" -path "C:\Users\noahb\.jdks\jdk-10"
-$compatibilityMatrix += New-CompatibilityObject -javaVersion "9.0" -gradleVersion "4.3" -path "C:\Users\noahb\.jdks\jdk-9.0.4"
-$compatibilityMatrix += New-CompatibilityObject -javaVersion "8.0" -gradleVersion "2.0" -path "C:\Users\noahb\.jdks\jdk-8"
-
-# Commits for automatic mode (startIndex 0 = startCommit)
+# Commits for sequential mode (startIndex 0 = startCommit)
 $startCommit = "main" # parameter for git checkout, can be refspec or commitId
 $startIndex = 0
-$endIndex = 100
+$endIndex = 100 # this determines how many builds will be performed
 
-$projectPath = "C:\Users\noahb\Desktop\jabref"
-$buildOutputPath = "C:\Users\noahb\Desktop\jabref\build\classes\java"
-$disposableArtifactsPaths = @("C:\Users\noahb\Desktop\jabref\src\main\generated","C:\Users\noahb\Desktop\jabref\src\main\gen","C:\Users\noahb\Desktop\jabref\build")
-$arcanJarPath = "C:\Users\noahb\Desktop\dvad14-smelly-replication\Arcan-1.3.5\Arcan-1.3.5-SNAPSHOT\Arcan-1.3.5-SNAPSHOT.jar"
-$metricsPath = "C:\Users\noahb\Desktop\dvad14-smelly-replication\data"
-
-# Main Java version
-$normalJavaPath = "C:\Program Files\Java\jdk-17.0.2"
+# Paths
+$projectPath = $PSScriptRoot
+$buildOutputPath = Join-Path $projectPath "jabref\build\classes\java"
+$disposableArtifactsPaths = @(  (Join-Path $projectPath "jabref\src\main\generated"),
+                                (Join-Path $projectPath "jabref\src\main\gen"),
+                                (Join-Path $projectPath "jabref\build"))
+$arcanJarPath = Join-Path $projectPath "Arcan-1.3.5\Arcan-1.3.5-SNAPSHOT.jar"
+$normalJavaPath = Join-Path $projectPath "java\jdk-17" # main JDK version to be used to execute Arcan
+$metricsPath = Join-Path $projectPath "commits"
 
 # What CSV files by Arcan should be deleted to save space (not used for study or copied with modifications to new files)
 $unusedCSV = @( "classCyclesShapeTable.csv","classCyclicDependencyMatrix.csv","classCyclicDependencyTable.csv",
@@ -65,9 +53,35 @@ $unusedCSV = @( "classCyclesShapeTable.csv","classCyclicDependencyMatrix.csv","c
 # $startIndex = 0
 # $endIndex = $manualCommits.Count
 
+# Set compatibilities between Java and Gradle and specify paths to all the installed JDKs
+$compatibilityMatrix = @()
+$compatibilityMatrix += New-CompatibilityObject -javaVersion "17.0" -gradleVersion "7.3" -path (Join-Path $projectPath "java\jdk-17")
+$compatibilityMatrix += New-CompatibilityObject -javaVersion "16.0" -gradleVersion "7.0" -path (Join-Path $projectPath "java\jdk-16")
+$compatibilityMatrix += New-CompatibilityObject -javaVersion "15.0" -gradleVersion "6.7" -path (Join-Path $projectPath "java\jdk-15")
+$compatibilityMatrix += New-CompatibilityObject -javaVersion "14.0" -gradleVersion "6.3" -path (Join-Path $projectPath "java\jdk-14")
+$compatibilityMatrix += New-CompatibilityObject -javaVersion "13.0" -gradleVersion "6.0" -path (Join-Path $projectPath "java\jdk-13")
+$compatibilityMatrix += New-CompatibilityObject -javaVersion "12.0" -gradleVersion "5.4" -path (Join-Path $projectPath "java\jdk-12")
+$compatibilityMatrix += New-CompatibilityObject -javaVersion "11.0" -gradleVersion "5.0" -path (Join-Path $projectPath "java\jdk-11")
+$compatibilityMatrix += New-CompatibilityObject -javaVersion "10.0" -gradleVersion "4.7" -path (Join-Path $projectPath "java\jdk-10")
+$compatibilityMatrix += New-CompatibilityObject -javaVersion "9.0" -gradleVersion "4.3" -path (Join-Path $projectPath "java\jdk-9")
+$compatibilityMatrix += New-CompatibilityObject -javaVersion "8.0" -gradleVersion "2.0" -path (Join-Path $projectPath "java\jdk-8")
+
 ### End of Settings ###
 
+# Check if Jabref is already cloned
 Set-Location $projectPath
+if(!(Test-Path "jabref")) {
+    git clone "https://www.github.com/jabref/jabref.git"
+}
+Set-Location (Join-Path $projectPath "jabref")
+
+# Sanity check of JDKs
+foreach($compatibilityEntry in $compatibilityMatrix) {
+    if(!(Test-Path $compatibilityEntry.JDKPath)) {
+        Write-Error "JDK is not found in $($compatibilityEntry.JDKPath)"
+        exit
+    }
+}
 
 # Sequential mode (default)
 git checkout $startCommit
@@ -126,13 +140,30 @@ for ($i = $startIndex; $i -lt $endIndex; $i++) {
         $appliedBugfix3 = $False
     }
 
+    # Bugfix 4
+    if(($commitTime -le "2019-11-18T06:33:27") -and ($commitTime -ge "2019-11-16T12:42:07")) {
+        Write-Host "Applying Bugfix 4" -ForegroundColor Yellow
+        (Get-Content -Path "build.gradle" -Raw).replace("io.github.java-diff-utils:java-diff-utils:4.5-SNAPSHOT", "io.github.java-diff-utils:java-diff-utils:4.5") |
+        Set-Content -Path "build.gradle"
+    }
+
+    # Bugfix 5
+    if(($commitTime -le "2019-10-12T11:33:41")) {
+        Write-Host "Applying Bugfix 5" -ForegroundColor Yellow
+        git add build.gradle
+        git commit -m "bugfix"
+        git cherry-pick 515551793a75ded6859a904e2bd11108ae1034e2
+        $appliedBugfix5 = $True
+    } else {
+        $appliedBugfix5 = $False
+    }
+
     # Compile project
-    Write-Host "Starting gradle"
-    #& .\gradlew build -x test
+    Write-Host "Starting gradle" -ForegroundColor Blue
     & .\gradlew compileJava
-    Write-Host "Finished gradle"
+    Write-Host "Finished gradle" -ForegroundColor Blue
     if($LASTEXITCODE -eq 0) {
-        Write-Host "Build of $commitId succeeded"
+        Write-Host "Build of $commitId succeeded" -ForegroundColor Green
         $succededBuilds += New-BuildObject -commitId $commitId -dateTime $commitTime
 
         # Running Arcan
@@ -177,7 +208,7 @@ for ($i = $startIndex; $i -lt $endIndex; $i++) {
         }
     }
     else {
-        Write-Host "Build of $commitId failed"
+        Write-Host "Build of $commitId failed" -ForegroundColor Red
         $failedBuilds += New-BuildObject -commitId $commitId -dateTime $commitTime
     }
 
@@ -191,9 +222,15 @@ for ($i = $startIndex; $i -lt $endIndex; $i++) {
         }
     }
 
+    # Undo temporary commits
     if($appliedBugfix3) {
         git reset --hard HEAD^
     }
+    if($appliedBugfix5) {
+        git reset --hard HEAD^
+        git reset --hard HEAD^
+    }
+
     git reset --hard
 }
 

@@ -1,15 +1,13 @@
 ---
-title: "AS evolution with arcan jgit"
+title: "AS Prediction - Jabref - Pre-processing"
 author: "DVAD14 group B"
-date: "28th February 2022"
+date: "1 March 2022"
 output: html_document
 ---
 
 This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
 
 When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document.
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
 
 # AS-evolution
 Note: split fullname classes <http://stackoverflow.com/questions/24938616/string-split-on-last-comma-in-r/>
@@ -71,7 +69,7 @@ rm(appo)
 
 hublike$HL <- 1
 
-# Group by  package
+# Group by package
 grouphublike <- hublike[
   , .(
     meanFanIn = mean(FanIn),
@@ -145,60 +143,10 @@ setDT(pkgcycle)
 head(pkgcycle)
 ```
 
-## Read *ixpd* from csv and print summary
+## IXPD
 ```{r Reading IXPD csv}
-#ixpd <- fread(file = "data/jabref/IXPD.csv")
-#ixpd <- ixpd[, java.out := gsub("^.*\\.(src|tst)\\.", "", java.out), ]
-#ixpd <- ixpd[, java.in := gsub("^.*\\.(src|tst)\\.", "", java.in), ]
-
-#appoixpdin <- str_split_fixed(ixpd$java.in, "\\.\\s*(?=[^\\.]+$)", 2)
-#appoixpdout <- str_split_fixed(ixpd$java.out, "\\.\\s*(?=[^\\.]+$)", 2)
-#ixpd$commit_time <- to.timestamp.fromint(ixpd$commit_time)
-#ixpd$package.in <- appoixpdin[, 1]
-#ixpd$className.in <- appoixpdin[, 2]
-#ixpd$package.out <- appoixpdout[, 1]
-#ixpd$className.out <- appoixpdout[, 2]
-#rm(appoixpdin)
-#rm(appoixpdout)
-
-#ixpd$IXPD <- 1
-#ixpd <- rename(ixpd, replace = c("package.out" = "package"))
-#ixpd <- rename(ixpd, replace = c("className.out" = "className"))
-
-#names(ixpd)
-#summary(ixpd)
-#head(ixpd)
-```
-
-```{r Group to package ixpd}
-#pkg.ixpd <- ixpd[
-#  , .(
-#    minCommit.out = min(commit.out), maxCommit.out = max(commit.out), meanCommit.out = mean(commit.out),
-#    minCommit.in = min(commit.in), maxCommit.in = max(commit.in), meanCommit.in = mean(commit.in),
-#    minRatio.out = min(ratio.out), maxRatio.out = max(ratio.out), meanRatio.out = mean(ratio.out),
-#    minRatio.in = min(ration.in), maxRatio.in = max(ration.in), meanRatio.in = mean(ration.in),
-#    numClasses = length(java.in),
-#    IXPD = length(java.in),
-#    numPackages = length(unique(package.in))
-#  ),
-#  .(version, commit_time, package)
-#]
-
-#names(pkg.ixpd)
-```
-
-```{r Developers info}
-#class.dev <- fread("data/jabref/development.csv")
-#class.dev$commit_time <- to.timestamp.fromint(class.dev$commit_time)
-#class.dev <- class.dev[, javafile := gsub("^.*\\.(src|tst)\\.", "", javafile), ]
-#appodev <- str_split_fixed(class.dev$javafile, "\\.\\s*(?=[^\\.]+$)", 2)
-#class.dev$package <- appodev[, 1]
-#class.dev$className <- appodev[, 2]
-
-#pkg.dev <- class.dev[, .(numjavafile = length(unique(javafile)), nummail = length(unique(mail)), max.file.changed #= max(file.changed), sum.added.total = sum(added.total), sum.removed.total = sum(removed.total), sum.added.file = #sum(added.file), sum.removed.file = sum(removed.file)), .(version, commit_time, package, author, mail)]
-
-#head(pkg.dev)
-
+# Arcan does not (anymore) create IXPD data out of the box.
+# Therefor these sections were removed.
 ```
 
 # Merging
@@ -248,24 +196,6 @@ rm(clcycle)
 rm(clcycletype)
 rm(classmetrics)
 ```
-
-## Merging by metrics-cycle with IXPD at class level (left outer join)
-```{r Merging class cycle-metrics with IXPD at class level}
-#keycols = c("version", "package", "className")
-#setkeyv(ixpd, keycols)
-#setkeyv(class.cycle.metric.merging, keycols)
-#ixpd <- subset(ixpd, select = -c(commit_time))
-#class.cycle.metric.ixpd.merging <- ixpd[class.cycle.metric.merging]
-
-#class.cycle.metric.ixpd.merging[is.na(class.cycle.metric.ixpd.merging)] <- 0
-#names(class.cycle.metric.ixpd.merging)
-#summary(class.cycle.metric.ixpd.merging)
-#head(class.cycle.metric.ixpd.merging)
-
-# Clean memory from no-more used data sets
-#rm(ixpd)
-#rm(class.cycle.metric.merging)
-``` 
 
 ## Merging by metrics-cycle with Hub-Like at class level (left outer join)
 ```{r Merging class cycle-metrics with Hub-Like at class level}
@@ -422,50 +352,7 @@ rm(pkg.unstabledep)
 rm(pkg.metric.CD.HL)
 ```
 
-```{r Package merge ixpd}
-#keycols <- c("version", "package")
-#setkeyv(pkg.ixpd, keycols)
-#setkeyv(pkg.metric.CD.HL.UD, keycols)
-#pkg.ixpd <- subset(pkg.ixpd, select = -c(commit_time))
-#pkg.metric.CD.HL.UD.ixpd <- pkg.ixpd[pkg.metric.CD.HL.UD]
-#pkg.metric.CD.HL.UD.ixpd[is.na(pkg.metric.CD.HL.UD.ixpd)] <- 0
-
-# Clean memory from no-more used data sets
-#rm(pkg.ixpd)
-#rm(pkg.metric.CD.HL.UD)
-```
-
 ```{r Write merged datasets to file}
 fwrite(pkg.metric.CD.HL.UD, "cache/jabref/package_merged.csv", append = FALSE)
 fwrite(class.cycle.metric.HL.UD.merging, "cache/jabref/class_merged.csv", append = FALSE)
-```
-
-```{r Package merge dev}
-#keycols <- c("version", "package")
-#setkeyv(pkg.dev, keycols)
-#setkeyv(pkg.metric.CD.HL.UD, keycols)
-#pkg.dev <- subset(pkg.dev, select = -c(commit_time))
-#pkg.metric.CD.HL.UD.dev <- pkg.dev[pkg.metric.CD.HL.UD]
-#pkg.metric.CD.HL.UD.dev[is.na(pkg.metric.CD.HL.UD.dev)] <- 0
-
-# Clean memory from no-more used data sets
-#rm(pkg.dev)
-#rm(pkg.metric.CD.HL.UD)
-```
-
-```{r Class merge dev}
-#setkey(class.dev, "version", "package", "className")
-#setkey(class.cycle.metric.ixpd.HL.UD.merging, "version", "package", "className")
-#class.dev <- subset(class.dev, select = -c(commit_time))
-#class.cycle.metric.ixpd.HL.UD.dev <- class.dev[class.cycle.metric.ixpd.HL.UD.merging]
-#class.cycle.metric.ixpd.HL.UD.dev[is.na(class.cycle.metric.ixpd.HL.UD.dev)] <- 0
-
-# Clean memory from no-more used data sets
-#rm(class.dev)
-#rm(class.cycle.metric.ixpd.HL.UD.merging)
-```
-
-```{r Write merged datasets to file dev}
-#fwrite(pkg.metric.CD.HL.UD.ixpd.dev, "cache/jabref/package_merged.dev.csv", append = FALSE)
-#fwrite(class.cycle.metric.ixpd.HL.UD.dev, "cache/jabref/class_merged.dev.csv", append = FALSE)
 ```

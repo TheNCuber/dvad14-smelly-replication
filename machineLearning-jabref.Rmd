@@ -1,9 +1,13 @@
 ---
-title: "Machine Learning Algorithm"
-author: "DVAD14 group B"
-date: "18 February 2022"
+title: "AS Prediction - Jabref - Machine Learning"
+author: "DVAD14 Group B"
+date: "1 March 2022"
 output: html_document
 ---
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document.
 
 ```{r Load R libraries and set settings}
 options(java.parameters = "-Xmx12g")
@@ -73,7 +77,6 @@ head(pkg.merged.df)
 # Add new column commit_date with values YYYY-mm based on commit_time
 pkg.merged.df$commit_date <- factor(strftime(pkg.merged.df$commit_time, "%Y-%m"))
 
-
 # Remove columns ["version", "commit_time"]
 # Group by columns ["package", "commit_date"]
 # Aggregate metrics within groups
@@ -113,12 +116,6 @@ lag.df <- function(df, lags, colnames = names(df)) {
 ```
 
 ```{r Lag package dataset}
-#pkg.merged.df <- subset(pkg.merged.df, select = -c(minCommit.out, maxCommit.out, meanCommit.out, minCommit.in, #maxCommit.in, meanCommit.in))
-
-# The following comment was put in by the authors.
-# The meaning is unclear but it may be useful later:
-# minRatio.out, maxRatio.out, meanRatio.out, minRatio.in, maxRatio.in, meanRatio.in
-
 pkg.lagged <- ddply(pkg.merged.df, .(package), function(pkg) {
   sorted <- pkg[order(pkg[["commit_date"]], decreasing = TRUE), ]
   lag.df(sorted, 12, colnames = setdiff(names(sorted), c("package", "commit_date")))
@@ -139,10 +136,9 @@ pkg.dataset <- subset(pkg.lagged, select = -c(commit_date, package))
 tfcutter <- colwise(cut, breaks = c(0, 1, .Machine$integer.max), labels = c(0, 1), right = FALSE, ordered_result = TRUE)
 pkg.dataset <- cbind(tfcutter(pkg.dataset[targets]), pkg.dataset[setdiff(names(pkg.dataset), targets)])
 
-
 # Remove columns with near-zero variance
 # Manually add 'HL' column (nzv for our data), as it is a metric
-pkg.dataset.nzv <- pkg.dataset[, -setdiff(nearZeroVar(pkg.dataset), grep('^HL$', colnames(pkg.dataset)))]
+pkg.dataset.nzv <- pkg.dataset[, -nearZeroVar(pkg.dataset)]
 
 # Save cv settings in fitControl variable:
 # 10-fold CV with 10 repetitions
@@ -163,10 +159,8 @@ runCV <- function(lagged, .models, .shapes, .outfilePrefix = "") {
     currentShape <- paste(experiment[1, "shape"])
     currentModel <- paste(experiment[1, "model"])
 
-
     if (currentShape %in% names(lagged)) {
       # Keep only lagged columns in the data set, plus the class itself
-      # browser()
       lagged.train <- cbind(
         lagged[c(currentShape)],
         lagged[grep("-", names(lagged))]
@@ -186,7 +180,6 @@ runCV <- function(lagged, .models, .shapes, .outfilePrefix = "") {
       write.csv(cm.df, paste0(.outfilePrefix, "cm-", currentShape, "-", currentModel, ".csv"))
       # Save to .rds (RStudio file) as well
       saveRDS(fit, paste0(.outfilePrefix, "model-", currentShape, "-", currentModel, ".rds"))
-      # cm.df
     } else {
       data.frame()
     }
@@ -247,6 +240,8 @@ runCV.smote <- function(lagged, .models, .shapes, .outfilePrefix = "") {
 ```
 
 ```{r Train nb and all targets}
+# The naive bayes model is not working properly.
+
 #models <- c("nb")
 #set.seed(825)
 #confusionMatricesNB <- runCV(pkg.dataset.nzv, models, targets, "jgit-month-")
@@ -273,6 +268,8 @@ write.csv(rbind(confusionMatricesC50, confusionMatricesRF), "jabref-month-cm-ALL
 ```
 
 ```{r Train nb and all targets smote}
+# The naive bayes model is not working properly.
+
 #models <- c("nb")
 #set.seed(825)
 #confusionMatricesNB <- runCV.smote(pkg.dataset.nzv, models, targets, "smote.jgit-month-")
@@ -286,7 +283,6 @@ confusionMatricesC50 <- runCV.smote(pkg.dataset.nzv, models, targets, "smote.jab
 write.csv(confusionMatricesC50, "smote.jabref-month-cm-ALL-c50.csv")
 ```
 
-
 ```{r Train rf and all targets smote}
 models <- c("rf") # "C5.0" "logreg" has some issues, should be tested outside
 set.seed(825)
@@ -296,7 +292,7 @@ write.csv(confusionMatricesRF, "smote.jabref-month-cm-ALL-rf.csv")
 
 ```{r Write all confusion matrices smote}
 write.csv(rbind(confusionMatricesC50, confusionMatricesRF), "smote.jabref-month-cm-ALL-ALL.csv")
-# write.csv(rbind(confusionMatricesNB, confusionMatricesC50, confusionMatricesRF), "smote.jgit-month-cm-ALL-ALL.csv")
+#write.csv(rbind(confusionMatricesNB, confusionMatricesC50, confusionMatricesRF), "smote.jgit-month-cm-ALL-ALL.csv")
 ```
 
 ```{r Define svm functions}
@@ -329,7 +325,6 @@ fitControl.svm <- trainControl(
   verboseIter = TRUE,
 )
 
-
 # Define a function to encapsulate the training procedure
 runCV.svm <- function(lagged, .grid, .models, .targets, .outfilePrefix = "") {
   # Generate all combinations of targets and models to test
@@ -355,14 +350,12 @@ runCV.svm <- function(lagged, .grid, .models, .targets, .outfilePrefix = "") {
         x = model.matrix(~ . - 1, lagged.train),
         method = currentModel,
         tuneGrid = .grid,
-        # tuneLength =9, # 9 values of the cost function
         preProc = c("center", "scale"), # Center and scale data
         trControl = fitControl.svm
       )
 
       test_pred <- predict(fit, newData = model.matrix(~ . - 1, testData))
       print("predictiton test", test_pred)
-      # cm <- confusionMatrix(test_pred,testData[,currentShape])
       cm <- confusionMatrix(fit$pred$pred, fit$pred$obs, positive = "1", mode = "prec_recall")
       cm.df <- data.frame(as.list(cm$overall), as.list(cm$byClass))
       write.csv(cm.df, paste0(.outfilePrefix, "cm-", currentShape, "-", currentModel, ".csv"))
@@ -393,11 +386,10 @@ confusionMatricesSVMlinear <- runCV.svm(pkg.dataset.nzv, grid, models, targets, 
 write.csv(confusionMatricesSVMlinear, "jabref-month-cm-ALL-svm-linear.csv")
 ```
 
-
 ```{r Read all confusion matrices}
-files <- list.files(path = "data/ml-results/jabref/month", pattern = ".csv")
+files <- list.files(path = ".", pattern = ".csv")
 readFromCsv <- function(filename, header = TRUE, sep = ",") {
-  ret <- read.csv(paste0("data/ml-results/jabref/month/", filename), header, sep)
+  ret <- read.csv(paste0("./", filename), header, sep)
   appo <- str_split_fixed(filename, "\\-", 4)
   ret$System <- appo[, 1]
   ret$Var <- appo[, 3]

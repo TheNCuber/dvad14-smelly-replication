@@ -38,8 +38,11 @@ vignettes/*.pdf
 # R Environment Variables
 .Renviron
 
-
 # Data, Models
 /data
+/commits
 *.csv
 *.rds
+
+# Jabref
+/jabref

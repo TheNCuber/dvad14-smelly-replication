@@ -43,6 +43,7 @@ vignettes/*.pdf
 /commits
 *.csv
 *.rds
+*.html
 
 # Jabref
 /jabref

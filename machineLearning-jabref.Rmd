@@ -70,7 +70,6 @@ pkg.merged.df <-
     )
   )
 head(pkg.merged.df)
-
 ```
 
 ```{r Group data by year-month-day}
@@ -85,7 +84,7 @@ pkg.merged.df <- ddply(pkg.merged.df[setdiff(names(pkg.merged.df), c("version", 
   function(slice) {
     slice.cols <- setdiff(names(slice), c("package", "commit_date"))
     cbind(
-       # without IXPD we don't have any columns with mix, max and mean and this would lead to an error
+       # Without IXPD we don't have any columns with mix, max and mean and this would lead to an error
        #colwise(min)(slice[, slice.cols[grep("min", slice.cols)]]),
        #colwise(max)(slice[, slice.cols[grep("max", slice.cols)]]),
        #colwise(mean)(slice[, slice.cols[grep("(mean|sd)", slice.cols)]]),
@@ -137,8 +136,9 @@ tfcutter <- colwise(cut, breaks = c(0, 1, .Machine$integer.max), labels = c(0, 1
 pkg.dataset <- cbind(tfcutter(pkg.dataset[targets]), pkg.dataset[setdiff(names(pkg.dataset), targets)])
 
 # Remove columns with near-zero variance
-# Manually add 'HL' column (nzv for our data), as it is a metric
-pkg.dataset.nzv <- pkg.dataset[, -nearZeroVar(pkg.dataset)]
+# Manually add 'CD' column (nzv for our data), as it is an important metric
+pkg.dataset.nzv <- pkg.dataset[, -setdiff(nearZeroVar(pkg.dataset), grep('^CD$', colnames(pkg.dataset)))]
+#pkg.dataset.nzv <- pkg.dataset[, -nearZeroVar(pkg.dataset)]
 
 # Save cv settings in fitControl variable:
 # 10-fold CV with 10 repetitions
@@ -180,6 +180,7 @@ runCV <- function(lagged, .models, .shapes, .outfilePrefix = "") {
       write.csv(cm.df, paste0(.outfilePrefix, "cm-", currentShape, "-", currentModel, ".csv"))
       # Save to .rds (RStudio file) as well
       saveRDS(fit, paste0(.outfilePrefix, "model-", currentShape, "-", currentModel, ".rds"))
+      cm.df
     } else {
       data.frame()
     }
@@ -244,8 +245,8 @@ runCV.smote <- function(lagged, .models, .shapes, .outfilePrefix = "") {
 
 #models <- c("nb")
 #set.seed(825)
-#confusionMatricesNB <- runCV(pkg.dataset.nzv, models, targets, "jgit-month-")
-#write.csv(confusionMatricesNB, "jgit-month-cm-ALL-nb.csv")
+#confusionMatricesNB <- runCV(pkg.dataset.nzv, models, targets, "jabref-month-")
+#write.csv(confusionMatricesNB, "jabref-month-cm-ALL-nb.csv")
 ```
 
 ```{r Train C5.0 and all targets}
@@ -264,7 +265,7 @@ write.csv(confusionMatricesRF, "jabref-month-cm-ALL-rf.csv")
 
 ```{r Write all confusion matrices}
 write.csv(rbind(confusionMatricesC50, confusionMatricesRF), "jabref-month-cm-ALL-ALL.csv")
-#write.csv(rbind(confusionMatricesNB, confusionMatricesC50, confusionMatricesRF), "jgit-month-cm-ALL-ALL.csv")
+#write.csv(rbind(confusionMatricesNB, confusionMatricesC50, confusionMatricesRF), "jabref-month-cm-ALL-ALL.csv")
 ```
 
 ```{r Train nb and all targets smote}
@@ -272,8 +273,8 @@ write.csv(rbind(confusionMatricesC50, confusionMatricesRF), "jabref-month-cm-ALL
 
 #models <- c("nb")
 #set.seed(825)
-#confusionMatricesNB <- runCV.smote(pkg.dataset.nzv, models, targets, "smote.jgit-month-")
-#write.csv(confusionMatricesNB, "smote.jgit-month-cm-ALL-nb.csv")
+#confusionMatricesNB <- runCV.smote(pkg.dataset.nzv, models, targets, "smote.jabref-month-")
+#write.csv(confusionMatricesNB, "smote.jabref-month-cm-ALL-nb.csv")
 ```
 
 ```{r Train C5.0 and all targets smote}
@@ -292,7 +293,7 @@ write.csv(confusionMatricesRF, "smote.jabref-month-cm-ALL-rf.csv")
 
 ```{r Write all confusion matrices smote}
 write.csv(rbind(confusionMatricesC50, confusionMatricesRF), "smote.jabref-month-cm-ALL-ALL.csv")
-#write.csv(rbind(confusionMatricesNB, confusionMatricesC50, confusionMatricesRF), "smote.jgit-month-cm-ALL-ALL.csv")
+#write.csv(rbind(confusionMatricesNB, confusionMatricesC50, confusionMatricesRF), "smote.jabref-month-cm-ALL-ALL.csv")
 ```
 
 ```{r Define svm functions}
@@ -304,7 +305,6 @@ targets <- c(shapes, "CD", "UD", "HL")
 pkg.dataset.svm <- subset(pkg.lagged, select = -c(commit_date, package))
 n <- names(pkg.dataset.svm)
 
-# Remove columns with near-zero variance
 range01 <- function(x) {
   (x - min(x)) / (max(x) - min(x))
 }
@@ -312,7 +312,11 @@ pkg.dataset.svm.t <- apply(pkg.dataset.svm[setdiff(names(pkg.dataset.svm), targe
 pkg.dataset.svm <- cbind(ifelse(pkg.dataset.svm[targets] < 1, 0, 1), pkg.dataset.svm.t)
 rm(pkg.dataset.svm.t)
 pkg.dataset.svm <- as.data.frame(pkg.dataset.svm)
-pkg.dataset.svm <- pkg.dataset.svm[, -nearZeroVar(pkg.dataset.svm)]
+
+# Remove columns with near-zero variance
+# Manually add 'CD' column (nzv for our data), as it is an important metric
+pkg.dataset.svm <- pkg.dataset.svm[, -setdiff(nearZeroVar(pkg.dataset.svm), grep('^CD$', colnames(pkg.dataset.svm)))]
+#pkg.dataset.svm <- pkg.dataset.svm[, -nearZeroVar(pkg.dataset.svm)]
 pkg.dataset.nzv <- pkg.dataset.svm
 
 # Save cv settings in fitControl variable:
@@ -406,8 +410,7 @@ write.csv(file = "all-md-ml.csv", temp)
 pkg.merged.df.sum <- ddply(pkg.merged.df,
   .(commit_date), summarize,
   cd = sum(CD), hl = sum(HL), ud = sum(UD), # star = sum(star), tiny = sum(tiny), chain = sum(chain), clique = sum(clique), circle = sum(circle),
-  tot = sum(CD, UD, HL), # , tiny, circle, chain, clique, star),
-  .progress = "text"
+  tot = sum(CD, UD, HL) # , tiny, circle, chain, clique, star)
 )
 write.csv(file = "jabref-as-evolution.csv", pkg.merged.df.sum)
 ```

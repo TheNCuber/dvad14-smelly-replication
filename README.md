@@ -19,7 +19,7 @@ Our results, the data that is produced in intermediate steps and additional requ
 https://osf.io/p2jft/?view_only=761191a4e20e42d58d370d46f42faad4
 
 ### JDKs
-In order to compile Jabref you will need several differnt versions of the Java Development Kit. They are available from the OpenJDK archive:
+In order to compile Jabref you will need several different versions of the Java Development Kit. They are available from the OpenJDK archive:
 
 https://jdk.java.net/archive/
 

@@ -130,8 +130,8 @@ for ($i = $startIndex; $i -lt $endIndex; $i++) {
         (Get-Content -Path ".\src\main\java\org\jabref\logic\citationstyle\CSLAdapter.java" -Raw).replace("new DefaultAbbreviationProvider(), null, newStyle, `"en-US`");", "new DefaultAbbreviationProvider(), newStyle, `"en-US`");") |
         Set-Content -Path ".\src\main\java\org\jabref\logic\citationstyle\CSLAdapter.java"
     }
-	
-	# Bugfix 3
+    
+    # Bugfix 3
     if(($commitTime -le "2020-07-17T17:23:34") -and ($commitTime -ge "2020-05-15T09:27:24")) {
         Write-Host "Applying Bugfix 3" -ForegroundColor Yellow
         git cherry-pick 87e824237585e3a33a58c356607cc8a56ffeac54
